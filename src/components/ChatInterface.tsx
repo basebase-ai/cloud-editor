@@ -185,17 +185,22 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
               {language || 'code'}
             </Text>
             <Box
-              bg="var(--mantine-color-gray-1)"
               p="sm"
               style={{
                 borderRadius: '6px',
                 fontFamily: 'Monaco, Menlo, "Ubuntu Mono", monospace',
                 fontSize: '13px',
                 border: '1px solid var(--mantine-color-gray-4)',
-                overflow: 'auto'
+                overflow: 'auto',
+                backgroundColor: 'light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6))',
+                color: 'light-dark(var(--mantine-color-gray-9), var(--mantine-color-gray-0))'
               }}
             >
-              <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
+              <pre style={{ 
+                margin: 0, 
+                whiteSpace: 'pre-wrap',
+                color: 'inherit'
+              }}>
                 {codeLines.join('\n')}
               </pre>
             </Box>
