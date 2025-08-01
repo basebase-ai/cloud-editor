@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { 
   Stack, 
   ScrollArea, 
@@ -118,7 +118,8 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
             ));
             
             // Scroll after each chunk to ensure we stay at bottom during streaming
-            setTimeout(scrollToBottom, 0);
+            // The useEffect will handle this automatically, but we can force immediate scroll for better UX
+            scrollToBottom(true);
           }
         }
       }
@@ -132,31 +133,92 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
     }
   };
 
-  // Auto-scroll function
-  const scrollToBottom = () => {
+  // Auto-scroll function with improved reliability
+  const scrollToBottom = (force = false) => {
     if (scrollAreaRef.current) {
       const viewport = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement;
       if (viewport) {
-        viewport.scrollTo({
-          top: viewport.scrollHeight,
-          behavior: 'smooth'
+        // Use requestAnimationFrame for better timing
+        requestAnimationFrame(() => {
+          viewport.scrollTo({
+            top: viewport.scrollHeight,
+            behavior: force ? 'auto' : 'smooth'
+          });
         });
       }
     }
   };
 
-  // Auto-scroll when messages change
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  // Auto-scroll when streaming content updates (content length changes)
+  // Auto-scroll when messages change or during streaming
   useEffect(() => {
     const lastMessage = messages[messages.length - 1];
-    if (lastMessage && lastMessage.role === 'assistant') {
-      scrollToBottom();
+    
+    // Always scroll on new messages
+    if (messages.length > 0) {
+      // Use immediate scroll for streaming assistant messages
+      const isStreaming = lastMessage?.role === 'assistant' && isLoading;
+      scrollToBottom(isStreaming);
     }
-  }, [messages]);
+  }, [messages, isLoading]);
+
+  // Enhanced markdown parsing function
+  const parseInlineMarkdown = (text: string): React.ReactNode => {
+    if (!text) return text;
+    
+    const parts: React.ReactNode[] = [];
+    let currentIndex = 0;
+    
+    // Define patterns for inline markdown with non-overlapping approach
+    const patterns = [
+      { regex: /\*\*([^*]+)\*\*/g, component: (_match: string, content: string) => <Text component="span" fw={700}>{content}</Text> },
+      { regex: /\*([^*]+)\*/g, component: (_match: string, content: string) => <Text component="span" fs="italic">{content}</Text> },
+      { regex: /`([^`]+)`/g, component: (_match: string, content: string) => <Text component="span" ff="monospace" px={4} py={2} style={{ borderRadius: 3, backgroundColor: 'light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6))', color: 'light-dark(var(--mantine-color-dark-9), var(--mantine-color-gray-0))' }}>{content}</Text> },
+    ];
+    
+    // Find all matches across all patterns
+    const allMatches: Array<{ start: number; end: number; element: React.ReactNode }> = [];
+    
+    patterns.forEach(pattern => {
+      const regex = new RegExp(pattern.regex.source, pattern.regex.flags);
+      let match;
+      while ((match = regex.exec(text)) !== null) {
+        allMatches.push({
+          start: match.index,
+          end: match.index + match[0].length,
+          element: pattern.component(match[0], match[1])
+        });
+      }
+    });
+    
+    // Sort matches by start position and remove overlapping matches
+    allMatches.sort((a, b) => a.start - b.start);
+    
+    // Filter out overlapping matches (keep the first one)
+    const filteredMatches = allMatches.filter((match, index) => {
+      if (index === 0) return true;
+      const prevMatch = allMatches[index - 1];
+      return match.start >= prevMatch.end;
+    });
+    
+    // Process matches and build result
+    filteredMatches.forEach((match, index) => {
+      // Add text before this match
+      if (match.start > currentIndex) {
+        parts.push(text.slice(currentIndex, match.start));
+      }
+      
+      // Add the formatted element
+      parts.push(<React.Fragment key={`inline-${index}`}>{match.element}</React.Fragment>);
+      currentIndex = match.end;
+    });
+    
+    // Add remaining text
+    if (currentIndex < text.length) {
+      parts.push(text.slice(currentIndex));
+    }
+    
+    return parts.length > 0 ? parts : text;
+  };
 
   const formatMessage = (content: string) => {
     const lines = content.split('\n');
@@ -191,15 +253,18 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
                 fontFamily: 'Monaco, Menlo, "Ubuntu Mono", monospace',
                 fontSize: '13px',
                 border: '1px solid var(--mantine-color-gray-4)',
-                overflow: 'auto',
+                overflowX: 'auto',
+                maxWidth: '100%',
                 backgroundColor: 'light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6))',
                 color: 'light-dark(var(--mantine-color-gray-9), var(--mantine-color-gray-0))'
               }}
             >
               <pre style={{ 
                 margin: 0, 
-                whiteSpace: 'pre-wrap',
-                color: 'inherit'
+                whiteSpace: 'pre',
+                color: 'inherit',
+                wordWrap: 'break-word',
+                overflowWrap: 'break-word'
               }}>
                 {codeLines.join('\n')}
               </pre>
@@ -209,43 +274,86 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
         continue;
       }
       
-      // Tool progress indicators (lines with emojis like 🔍, 📁, etc.)
-      if (line.match(/^[🔍📁📝🔧🔎⚡🔄]\s/)) {
+      // Handle headers
+      if (line.match(/^#{1,6}\s/)) {
+        const level = line.match(/^(#{1,6})/)?.[1].length || 1;
+        const headerText = line.replace(/^#{1,6}\s*/, '');
+        const sizes = ['xl', 'lg', 'md', 'sm', 'sm', 'xs'] as const;
+        const weights = [700, 600, 600, 500, 500, 500] as const;
+        
         elements.push(
-          <Text key={`progress-${elements.length}`} size="sm" c="blue.6" fw={500} mb={1} style={{ fontStyle: 'italic' }}>
-            {line}
+          <Text key={`header-${elements.length}`} size={sizes[level - 1]} fw={weights[level - 1]} mb="sm" mt={level === 1 ? "md" : "sm"} style={{ wordWrap: 'break-word', overflowWrap: 'break-word' }}>
+            {parseInlineMarkdown(headerText)}
+          </Text>
+        );
+      }
+      // Tool progress indicators (lines with emojis like 🔍, 📁, etc.)
+      else if (line.match(/^[🔍📁📝🔧🔎⚡🔄]\s/)) {
+        elements.push(
+          <Text key={`progress-${elements.length}`} size="sm" c="blue.6" fw={500} mb={1} style={{ fontStyle: 'italic', wordWrap: 'break-word', overflowWrap: 'break-word' }}>
+            {parseInlineMarkdown(line)}
           </Text>
         );
       }
       // Tool result summaries (lines starting with "Found", "Read", "Updated", etc.)
       else if (line.match(/^(Found|Read|Updated|Created|Searched|Listed|✓|Edited|Wrote)\s/) || line.includes(' matches for ') || line.includes(' lines from ')) {
         elements.push(
-          <Text key={`result-${elements.length}`} size="sm" c="green.7" fw={500} mb={1}>
-            {line.startsWith('✓') ? line : `${line}`}
+          <Text key={`result-${elements.length}`} size="sm" c="green.7" fw={500} mb={1} style={{ wordWrap: 'break-word', overflowWrap: 'break-word' }}>
+            {parseInlineMarkdown(line.startsWith('✓') ? line : line)}
           </Text>
         );
       }
-      // Bold text
-      else if (line.startsWith('**') && line.endsWith('**')) {
+      // List items with improved handling
+      else if (line.match(/^[\s]*[\*\-\+]\s/)) {
+        const indent = (line.match(/^(\s*)/)?.[1].length || 0) / 2; // Assume 2 spaces per indent level
+        const listText = line.replace(/^[\s]*[\*\-\+]\s*/, '');
+        
         elements.push(
-          <Text key={`bold-${elements.length}`} fw={600} size="sm" mb={2}>
-            {line.slice(2, -2)}
-          </Text>
+          <Box key={`list-${elements.length}`} ml={indent * 16} mb={2} style={{ maxWidth: '100%' }}>
+            <Text size="sm" style={{ display: 'flex', alignItems: 'flex-start' }}>
+              <Text component="span" mr={8} style={{ flexShrink: 0 }}>•</Text>
+              <Box style={{ wordWrap: 'break-word', overflowWrap: 'break-word', minWidth: 0, flex: 1 }}>{parseInlineMarkdown(listText)}</Box>
+            </Text>
+          </Box>
         );
       }
-      // List items
-      else if (line.startsWith('- ')) {
+      // Numbered lists
+      else if (line.match(/^[\s]*\d+\.\s/)) {
+        const indent = (line.match(/^(\s*)/)?.[1].length || 0) / 2;
+        const number = line.match(/^[\s]*(\d+)\./)?.[1] || '1';
+        const listText = line.replace(/^[\s]*\d+\.\s*/, '');
+        
         elements.push(
-          <Text key={`list-${elements.length}`} size="sm" c="dimmed" mb={1}>
-            {line}
-          </Text>
+          <Box key={`numlist-${elements.length}`} ml={indent * 16} mb={2} style={{ maxWidth: '100%' }}>
+            <Text size="sm" style={{ display: 'flex', alignItems: 'flex-start' }}>
+              <Text component="span" mr={8} style={{ flexShrink: 0, minWidth: '20px' }}>{number}.</Text>
+              <Box style={{ wordWrap: 'break-word', overflowWrap: 'break-word', minWidth: 0, flex: 1 }}>{parseInlineMarkdown(listText)}</Box>
+            </Text>
+          </Box>
         );
       }
-      // Regular text
+      // Blockquotes
+      else if (line.startsWith('> ')) {
+        const quoteText = line.replace(/^>\s*/, '');
+        elements.push(
+          <Box key={`quote-${elements.length}`} mb="sm" pl="md" style={{ borderLeft: '3px solid var(--mantine-color-gray-4)', maxWidth: '100%' }}>
+            <Text size="sm" c="dimmed" style={{ fontStyle: 'italic', wordWrap: 'break-word', overflowWrap: 'break-word' }}>
+              {parseInlineMarkdown(quoteText)}
+            </Text>
+          </Box>
+        );
+      }
+      // Empty lines
+      else if (line.trim() === '') {
+        elements.push(
+          <Box key={`space-${elements.length}`} mb="xs" />
+        );
+      }
+      // Regular text with inline markdown
       else {
         elements.push(
-          <Text key={`text-${elements.length}`} size="sm" mb={1}>
-            {line}
+          <Text key={`text-${elements.length}`} size="sm" mb={2} style={{ wordWrap: 'break-word', overflowWrap: 'break-word' }}>
+            {parseInlineMarkdown(line)}
           </Text>
         );
       }
@@ -274,9 +382,9 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
         p="sm"
         ref={scrollAreaRef}
         type="hover"
-        style={{ minHeight: 0 }}
+        style={{ minHeight: 0, maxWidth: '100%' }}
       >
-        <Stack gap="xs">
+        <Stack gap="xs" style={{ maxWidth: '100%' }}>
           {messages.map((message) => (
             message.role === 'user' ? (
               <Paper
@@ -286,15 +394,18 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
                 bg="transparent"
                 style={{
                   border: '1px solid var(--mantine-color-blue-6)',
+                  maxWidth: '100%',
+                  wordWrap: 'break-word',
+                  overflowWrap: 'break-word'
                 }}
               >
-                <Box>
+                <Box style={{ maxWidth: '100%', overflow: 'hidden' }}>
                   {formatMessage(message.content)}
                 </Box>
               </Paper>
             ) : (
-              <Box key={message.id} py="xs" px="sm">
-                <Box>
+              <Box key={message.id} py="xs" px="sm" style={{ maxWidth: '100%' }}>
+                <Box style={{ maxWidth: '100%', overflow: 'hidden' }}>
                   {formatMessage(message.content)}
                 </Box>
               </Box>

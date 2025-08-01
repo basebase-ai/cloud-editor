@@ -115,6 +115,55 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
             result = await searchInFiles(webcontainerRef.current, searchPattern, searchFiles);
             break;
 
+          case 'replaceLines':
+            const replacePath = params.path as string;
+            const queryText = params.query as string;
+            const replacementText = params.replacement as string;
+            console.log(`[WebContainer] Replacing lines in: ${replacePath}`);
+            try {
+              // Read the current file content
+              const currentContent = await webcontainerRef.current.fs.readFile(replacePath, 'utf-8');
+              
+              // Check if query text exists in the file
+              if (!currentContent.includes(queryText)) {
+                console.error(`[WebContainer] Query text not found in ${replacePath}`);
+                throw new Error(`Query text not found in file: ${replacePath}`);
+              }
+              
+              // Perform the replacement
+              const newContent = currentContent.replace(queryText, replacementText);
+              
+              // Verify the replacement actually changed something
+              if (newContent === currentContent) {
+                console.warn(`[WebContainer] No changes made to ${replacePath} - content identical after replacement`);
+                result = { success: false, path: replacePath, message: 'No changes made - replacement text identical to original' };
+              } else {
+                // Write the updated content back to the file
+                await webcontainerRef.current.fs.writeFile(replacePath, newContent);
+                console.log(`[WebContainer] Successfully replaced lines in ${replacePath}`);
+                
+                // Verify the file was written by reading it back
+                try {
+                  const verification = await webcontainerRef.current.fs.readFile(replacePath, 'utf-8');
+                  console.log(`[WebContainer] Verification: File ${replacePath} now contains ${verification.length} characters`);
+                } catch (verifyError) {
+                  console.warn(`[WebContainer] Could not verify file write for ${replacePath}:`, verifyError);
+                }
+                
+                result = { 
+                  success: true, 
+                  path: replacePath,
+                  originalLength: currentContent.length,
+                  newLength: newContent.length,
+                  message: `Successfully replaced lines in ${replacePath}`
+                };
+              }
+            } catch (replaceError) {
+              console.error(`[WebContainer] Failed to replace lines in ${replacePath}:`, replaceError);
+              throw replaceError;
+            }
+            break;
+
           case 'checkStatus':
             console.log(`[WebContainer] Checking system status...`);
             try {
@@ -470,18 +519,28 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
                   return; // Skip this file
                 }
               } else {
-                // Text file - decode base64 content to string
+                // Text file - decode base64 content to UTF-8 string
                 console.log(`Processing text file: ${file.path}`);
                 try {
                   if (fileData.content) {
-                    // GitHub API returns all files as base64, so decode to text
-                    content = atob(fileData.content.replace(/\s/g, ''));
+                    // GitHub API returns all files as base64, decode properly to UTF-8
+                    const base64Content = fileData.content.replace(/\s/g, '');
+                    
+                    // Use fetch with data URL to properly decode base64 to UTF-8
+                    const dataUrl = `data:text/plain;base64,${base64Content}`;
+                    const response = await fetch(dataUrl);
+                    content = await response.text();
                   } else {
                     content = '';
                   }
                 } catch (decodeErr) {
                   console.warn(`Failed to decode text file ${file.path}:`, decodeErr);
-                  content = fileData.content || '';
+                  // Fallback to atob if fetch method fails
+                  try {
+                    content = atob(fileData.content.replace(/\s/g, ''));
+                  } catch {
+                    content = fileData.content || '';
+                  }
                 }
               }
               

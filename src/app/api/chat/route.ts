@@ -55,6 +55,9 @@ function getToolStartMessage(toolName: string, args: Record<string, unknown>): s
       return `🔧 Running linter\n`;
     case 'check_status':
       return `⚡ Checking WebContainer status\n`;
+    case 'replace_lines':
+      const replacePath = args.path as string | undefined || '';
+      return `🔧 Replacing text in ${replacePath}\n`;
     default:
       return `🔄 Running ${toolName}\n`;
   }
@@ -88,6 +91,17 @@ function getToolResultMessage(toolName: string, result: Record<string, unknown>)
     case 'check_status':
       const error = result.error as boolean | string | undefined;
       return error ? `❌ Status check failed\n` : `✓ WebContainer status checked\n`;
+    case 'replace_lines':
+      const replaceSuccess = result.success as boolean | undefined;
+      const replacePath = result.path as string | undefined || '';
+      const originalLength = result.originalLength as number | undefined;
+      const newLength = result.newLength as number | undefined;
+      if (replaceSuccess) {
+        const lengthChange = originalLength && newLength ? ` (${originalLength} → ${newLength} chars)` : '';
+        return `✓ Replaced text in ${replacePath}${lengthChange}\n`;
+      } else {
+        return `❌ Failed to replace text in ${replacePath}\n`;
+      }
     default:
       return `✓ ${toolName} completed\n`;
   }
@@ -344,6 +358,47 @@ const checkStatusTool = tool({
   },
 });
 
+const replaceLinesTool = tool({
+  description: "Replace multi-line text blocks in a file with new content. More efficient than rewriting entire files when making targeted changes.",
+  inputSchema: z.object({
+    path: z.string().describe("Path to the file to modify"),
+    query: z.string().describe("The exact multi-line text to find and replace (must match exactly including whitespace)"),
+    replacement: z.string().describe("The new text to replace the query text with"),
+  }),
+  execute: async ({ path, query, replacement }) => {
+    console.log(`[Tool] replace_lines called with path: ${path}, query length: ${query.length}, replacement length: ${replacement.length}`);
+    try {
+      const result = await callWebContainer("replaceLines", { path, query, replacement });
+      console.log(`[Tool] replace_lines result:`, result);
+      const typedResult = result as {
+        success: boolean;
+        path: string;
+        message: string;
+        originalLength?: number;
+        newLength?: number;
+      };
+      return {
+        success: typedResult.success,
+        path: typedResult.path,
+        message: typedResult.message,
+        originalLength: typedResult.originalLength,
+        newLength: typedResult.newLength,
+        type: "replace_lines",
+      };
+    } catch (error) {
+      console.error(`[Tool] replace_lines error:`, error);
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      return {
+        success: false,
+        path,
+        message: `❌ Failed to replace lines in ${path}: ${errorMessage}`,
+        type: "replace_lines",
+        error: errorMessage,
+      };
+    }
+  },
+});
+
 export async function POST(req: Request) {
   try {
     const { messages } = await req.json();
@@ -406,6 +461,7 @@ export async function POST(req: Request) {
       grep_files: wrapToolWithStatus(grepFilesTool, 'grep_files', statusEmitter),
       run_linter: wrapToolWithStatus(runLinterTool, 'run_linter', statusEmitter),
       check_status: wrapToolWithStatus(checkStatusTool, 'check_status', statusEmitter),
+      replace_lines: wrapToolWithStatus(replaceLinesTool, 'replace_lines', statusEmitter),
     };
 
     // Create custom stream that provides immediate status updates
@@ -430,10 +486,16 @@ IMPORTANT: When a user makes their first request, ALWAYS start by gathering proj
 You can help users with their code by:
 1. Analyzing their project structure using list_files
 2. Reading specific files using read_file  
-3. Making code changes using edit_file
-4. Searching for patterns using grep_files
-5. Running linting to check code quality using run_linter
-6. Checking WebContainer status and debugging with check_status
+3. Making code changes using edit_file (for complete file rewrites)
+4. Making targeted changes using replace_lines (more efficient for specific text replacements)
+5. Searching for patterns using grep_files
+6. Running linting to check code quality using run_linter
+7. Checking WebContainer status and debugging with check_status
+
+When editing files:
+- Use replace_lines for targeted changes when you need to replace specific multi-line blocks
+- Use edit_file for complete file overwrites or when creating new files
+- replace_lines is more efficient and safer for making precise changes to existing code
 
 Never ask users for basic project information - always explore the codebase first to understand the context, then provide informed assistance.
 
