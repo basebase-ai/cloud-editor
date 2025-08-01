@@ -168,45 +168,65 @@ export default function WebContainerManager({ repoUrl, githubToken }: WebContain
     };
 
     const searchInFiles = async (webcontainer: WebContainer, pattern: string, filePattern: string = '*') => {
-      // Simple implementation - in a real app you'd want more sophisticated searching
       const results: Array<{ file: string; line: number; content: string; match: string }> = [];
+      console.log(`[WebContainer] Searching for pattern: "${pattern}" in files: ${filePattern}`);
       
-      try {
-        // For now, just search in common file types
-        const searchPaths = ['.'];
-        
-        for (const searchPath of searchPaths) {
-          try {
-            const entries = await webcontainer.fs.readdir(searchPath, { withFileTypes: true });
+      // Create case-insensitive regex
+      const regex = new RegExp(pattern, 'gi');
+      
+      // Recursive search function
+      const searchDirectory = async (dirPath: string) => {
+        try {
+          const entries = await webcontainer.fs.readdir(dirPath, { withFileTypes: true });
+          
+          for (const entry of entries) {
+            const fullPath = dirPath === '.' ? entry.name : `${dirPath}/${entry.name}`;
             
-            for (const entry of entries) {
-              if (entry.isFile() && entry.name.endsWith('.js') || entry.name.endsWith('.ts') || entry.name.endsWith('.json')) {
+            if (entry.isDirectory()) {
+              // Skip node_modules and .git directories
+              if (!entry.name.startsWith('.') && entry.name !== 'node_modules') {
+                await searchDirectory(fullPath);
+              }
+            } else if (entry.isFile()) {
+              // Search in text files (expanded list)
+              const isTextFile = [
+                '.js', '.jsx', '.ts', '.tsx', '.json', '.html', '.htm', '.css', '.scss', '.sass',
+                '.md', '.txt', '.xml', '.svg', '.vue', '.yaml', '.yml', '.toml', '.ini', '.env'
+              ].some(ext => entry.name.toLowerCase().endsWith(ext));
+              
+              if (isTextFile) {
                 try {
-                  const filePath = searchPath === '.' ? entry.name : `${searchPath}/${entry.name}`;
-                  const content = await webcontainer.fs.readFile(filePath, 'utf-8');
+                  const content = await webcontainer.fs.readFile(fullPath, 'utf-8');
                   const lines = content.split('\n');
                   
                   lines.forEach((line, index) => {
-                    if (line.includes(pattern)) {
+                    const matches = line.match(regex);
+                    if (matches) {
                       results.push({
-                        file: filePath,
+                        file: fullPath,
                         line: index + 1,
                         content: line.trim(),
-                        match: pattern
+                        match: matches[0] // First match found
                       });
                     }
                   });
                 } catch (fileError) {
-                  // Skip files that can't be read
+                  // Skip files that can't be read (binary, permissions, etc.)
+                  console.log(`[WebContainer] Skipping unreadable file: ${fullPath}`);
                 }
               }
             }
-          } catch (dirError) {
-            // Skip directories that can't be read
           }
+        } catch (dirError) {
+          console.log(`[WebContainer] Skipping unreadable directory: ${dirPath}`);
         }
+      };
+      
+      try {
+        await searchDirectory('.');
+        console.log(`[WebContainer] Search completed. Found ${results.length} matches for "${pattern}"`);
       } catch (error) {
-        console.error('Search failed:', error);
+        console.error('[WebContainer] Search failed:', error);
       }
       
       return { results, pattern, filesSearched: filePattern };
@@ -584,16 +604,7 @@ export default defineConfig({
     setStatus('Installing dependencies...');
     console.log('[Dev Server] Starting npm install...');
     const installProcess = await webcontainer.spawn('npm', ['install']);
-    
-    // Log install output
-    installProcess.output.pipeTo(
-      new WritableStream({
-        write(data) {
-          console.log('[npm install]:', data);
-        }
-      })
-    );
-    
+        
     const installExitCode = await installProcess.exit;
     console.log(`[Dev Server] npm install exited with code: ${installExitCode}`);
     

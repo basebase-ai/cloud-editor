@@ -48,12 +48,14 @@ const listFilesTool = tool({
         files: { name: string; type: string }[];
         path: string;
       };
+      const fileList = typedResult.files.map((f) =>
+        f.type === "directory" ? `${f.name}/` : f.name
+      );
       return {
-        files: typedResult.files.map((f) =>
-          f.type === "directory" ? `${f.name}/` : f.name
-        ),
+        files: fileList,
         path: typedResult.path,
         type: "list_files",
+        message: `📁 Listed ${fileList.length} items in ${typedResult.path}`,
       };
     } catch (error) {
       console.error(`[Tool] list_files error:`, error);
@@ -62,6 +64,7 @@ const listFilesTool = tool({
         path,
         type: "list_files",
         error: error instanceof Error ? error.message : "Unknown error",
+        message: `❌ Failed to list files in ${path}`,
       };
     }
   },
@@ -78,11 +81,13 @@ const readFileTool = tool({
       const result = await callWebContainer("readFile", { path });
       console.log(`[Tool] read_file result:`, result);
       const typedResult = result as { content: string; path: string };
+      const lineCount = typedResult.content.split("\n").length;
       return {
         content: typedResult.content,
         path: typedResult.path,
-        lines: typedResult.content.split("\n").length,
+        lines: lineCount,
         type: "read_file",
+        message: `📁 Read ${lineCount} lines from ${typedResult.path}`,
       };
     } catch (error) {
       console.error(`[Tool] read_file error:`, error);
@@ -94,41 +99,43 @@ const readFileTool = tool({
         lines: 0,
         type: "read_file",
         error: errorMessage,
+        message: `❌ Failed to read ${path}: ${errorMessage}`,
       };
     }
   },
 });
 
-const editFileTool = tool({
-  description: "Edit or create a file with new content",
+const writeFileTool = tool({
+  description: "Write complete file contents (overwrites existing file)",
   inputSchema: z.object({
-    path: z.string().describe("Path to the file to edit"),
-    content: z.string().describe("New content for the file"),
+    path: z.string().describe("Path to the file to write"),
+    content: z.string().describe("Complete content for the file"),
   }),
   execute: async ({ path, content }) => {
     console.log(
-      `[Tool] edit_file called with path: ${path}, content length: ${content.length}`
+      `[Tool] write_file called with path: ${path}, content length: ${content.length}`
     );
     try {
       const result = await callWebContainer("writeFile", { path, content });
-      console.log(`[Tool] edit_file result:`, result);
+      console.log(`[Tool] write_file result:`, result);
+      const lineCount = content.split("\n").length;
       return {
         success: result.success,
         path: result.path,
-        message: `File ${path} updated successfully`,
+        message: `📝 Wrote ${path} (${lineCount} lines, ${content.length} characters)`,
         contentLength: content.length,
-        type: "edit_file",
+        type: "write_file",
       };
     } catch (error) {
-      console.error(`[Tool] edit_file error:`, error);
+      console.error(`[Tool] write_file error:`, error);
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
       return {
         success: false,
         path,
-        message: `❌ Failed to update file ${path}: ${errorMessage}`,
+        message: `❌ Failed to write ${path}: ${errorMessage}`,
         contentLength: content.length,
-        type: "edit_file",
+        type: "write_file",
         error: errorMessage,
       };
     }
@@ -151,20 +158,35 @@ const grepFilesTool = tool({
     try {
       const result = await callWebContainer("searchFiles", { pattern, files });
       console.log(`[Tool] grep_files result:`, result);
+      const typedResult = result as {
+        results: Array<{
+          file: string;
+          line: number;
+          content: string;
+          match: string;
+        }>;
+        pattern: string;
+        filesSearched: string;
+      };
+      const matchCount = typedResult.results.length;
       return {
-        results: result.results,
-        pattern: result.pattern,
-        filesSearched: result.filesSearched,
+        results: typedResult.results,
+        pattern: typedResult.pattern,
+        filesSearched: typedResult.filesSearched,
         type: "grep_files",
+        message: `🔍 Found ${matchCount} matches for "${pattern}"`,
       };
     } catch (error) {
       console.error(`[Tool] grep_files error:`, error);
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
       return {
         results: [],
         pattern,
         filesSearched: files,
         type: "grep_files",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: errorMessage,
+        message: `❌ Search failed for "${pattern}": ${errorMessage}`,
       };
     }
   },
@@ -211,6 +233,7 @@ const checkStatusTool = tool({
       return {
         type: "check_status",
         ...result,
+        message: result.message || "🔧 WebContainer status checked",
       };
     } catch (error) {
       console.error(`[Tool] check_status error:`, error);
@@ -238,13 +261,14 @@ export async function POST(req: Request) {
     console.log(
       `[Chat API] Starting streamText with ${messages.length} messages`
     );
+
     const result = await streamText({
       model: google("gemini-1.5-pro"),
       messages,
       tools: {
         list_files: listFilesTool,
         read_file: readFileTool,
-        edit_file: editFileTool,
+        write_file: writeFileTool,
         grep_files: grepFilesTool,
         run_linter: runLinterTool,
         check_status: checkStatusTool,
@@ -254,27 +278,39 @@ export async function POST(req: Request) {
 You can help users with their code by:
 1. Analyzing their project structure using list_files
 2. Reading specific files using read_file  
-3. Making code changes using edit_file
+3. Writing complete file contents using write_file
 4. Searching for patterns using grep_files
 5. Running linting to check code quality using run_linter
 6. Checking WebContainer status and debugging with check_status
 
 When helping users:
 - Take multiple steps to understand the codebase first
-- Always announce what tool you're about to use (e.g., "🔍 Searching for 'import'..." or "📁 Reading package.json...")
 - Use tools to gather information before making changes
-- After each tool call, briefly summarize what you found (e.g., "Found 3 import statements" or "Package.json contains 12 dependencies")
+- Actually call the tools instead of just describing what you would do
+- ALWAYS immediately output the 'message' field from each tool result to show progress to users
 - If changes don't appear to take effect (like file edits not showing in the browser), use check_status to debug
-- Show your progress step by step
-- Provide clear summaries of changes made
+- Be methodical and thorough
 
-Always be thorough and methodical in your approach. Break down complex requests into smaller steps and show your progress with brief tool announcements.`,
+CRITICAL: When you need to modify a file, actually call the write_file tool with the complete file contents. Don't just show code examples - make real changes.
+
+CRITICAL: After every tool call, immediately output the result's 'message' field. For example:
+- After read_file: output the message like "📁 Read 45 lines from app/components/AuthPage.tsx" 
+- After grep_files: output the message like "🔍 Found 2 matches for 'Sign In'"
+- After write_file: output the message like "📝 Wrote app/components/AuthPage.tsx (89 lines, 2456 characters)"
+
+MANTINE COLOR GUIDE: Use only these valid color keys for Button color and theme.primaryColor:
+'dark', 'gray', 'red', 'pink', 'grape', 'violet', 'indigo', 'blue', 'cyan', 'green', 'lime', 'yellow', 'orange', 'teal'
+Never use "purple" - use "grape" or "violet" instead.
+
+Always be thorough and methodical in your approach. Break down complex requests into smaller steps and show your progress with brief tool announcements.
+`,
       stopWhen: stepCountIs(5),
       experimental_telemetry: {
         isEnabled: true,
         functionId: "webcontainer-tools",
       },
     });
+
     console.log(`[Chat API] StreamText completed, returning response`);
 
     return result.toTextStreamResponse();

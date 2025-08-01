@@ -143,44 +143,96 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
   }, [messages]);
 
   const formatMessage = (content: string) => {
-    // Simple markdown-like formatting for steps
-    return content.split('\n').map((line, index) => {
+    const lines = content.split('\n');
+    const elements: React.ReactNode[] = [];
+    let i = 0;
+    
+    while (i < lines.length) {
+      const line = lines[i];
+      
+      // Handle code blocks
+      if (line.startsWith('```')) {
+        const language = line.slice(3).trim();
+        const codeLines: string[] = [];
+        i++; // Skip opening ```
+        
+        // Collect code lines until closing ```
+        while (i < lines.length && !lines[i].startsWith('```')) {
+          codeLines.push(lines[i]);
+          i++;
+        }
+        i++; // Skip closing ```
+        
+        elements.push(
+          <Box key={`code-${elements.length}`} mb="md">
+            <Text size="xs" c="dimmed" mb={2}>
+              {language || 'code'}
+            </Text>
+            <Box
+              bg="gray.0"
+              p="sm"
+              style={{
+                borderRadius: '6px',
+                fontFamily: 'Monaco, Menlo, "Ubuntu Mono", monospace',
+                fontSize: '13px',
+                border: '1px solid var(--mantine-color-gray-3)',
+                overflow: 'auto'
+              }}
+            >
+              <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
+                {codeLines.join('\n')}
+              </pre>
+            </Box>
+          </Box>
+        );
+        continue;
+      }
+      
       // Tool progress indicators (lines with emojis like 🔍, 📁, etc.)
-      if (line.match(/^[🔍📁📝🔧🔎⚡]\s/)) {
-        return (
-          <Text key={index} size="sm" c="blue.6" fw={500} mb={1} style={{ fontStyle: 'italic' }}>
+      if (line.match(/^[🔍📁📝🔧🔎⚡🔄]\s/)) {
+        elements.push(
+          <Text key={`progress-${elements.length}`} size="sm" c="blue.6" fw={500} mb={1} style={{ fontStyle: 'italic' }}>
             {line}
           </Text>
         );
       }
       // Tool result summaries (lines starting with "Found", "Read", "Updated", etc.)
-      if (line.match(/^(Found|Read|Updated|Created|Searched|Listed)\s/)) {
-        return (
-          <Text key={index} size="sm" c="green.7" fw={500} mb={1}>
-            ✓ {line}
+      else if (line.match(/^(Found|Read|Updated|Created|Searched|Listed|✓|Edited|Wrote)\s/) || line.includes(' matches for ') || line.includes(' lines from ')) {
+        elements.push(
+          <Text key={`result-${elements.length}`} size="sm" c="green.7" fw={500} mb={1}>
+            {line.startsWith('✓') ? line : `${line}`}
           </Text>
         );
       }
-      if (line.startsWith('**') && line.endsWith('**')) {
-        return (
-          <Text key={index} fw={600} size="sm" mb={2}>
+      // Bold text
+      else if (line.startsWith('**') && line.endsWith('**')) {
+        elements.push(
+          <Text key={`bold-${elements.length}`} fw={600} size="sm" mb={2}>
             {line.slice(2, -2)}
           </Text>
         );
       }
-      if (line.startsWith('- ')) {
-        return (
-          <Text key={index} size="sm" c="dimmed" mb={1}>
+      // List items
+      else if (line.startsWith('- ')) {
+        elements.push(
+          <Text key={`list-${elements.length}`} size="sm" c="dimmed" mb={1}>
             {line}
           </Text>
         );
       }
-      return (
-        <Text key={index} size="sm" mb={1}>
-          {line}
-        </Text>
-      );
-    });
+      // Regular text
+      else {
+        elements.push(
+          <Text key={`text-${elements.length}`} size="sm" mb={1}>
+            {line}
+          </Text>
+        );
+      }
+      
+      i++;
+    }
+    
+    return elements;
   };
 
   return (
