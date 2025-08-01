@@ -20,7 +20,7 @@ interface ToolErrorEvent {
 
 // Event emitter for tool status messages
 class ToolStatusEmitter {
-  private listeners: { [key: string]: ((data: any) => void)[] } = {};
+  private listeners: { [key: string]: ((data: unknown) => void)[] } = {};
 
   emit(event: string, data: ToolStartEvent | ToolCompleteEvent | ToolErrorEvent) {
     if (this.listeners[event]) {
@@ -28,7 +28,7 @@ class ToolStatusEmitter {
     }
   }
 
-  on(event: string, listener: (data: any) => void) {
+  on(event: string, listener: (data: unknown) => void) {
     if (!this.listeners[event]) {
       this.listeners[event] = [];
     }
@@ -37,16 +37,20 @@ class ToolStatusEmitter {
 }
 
 // Generate status messages for different tools
-function getToolStartMessage(toolName: string, args: any): string {
+function getToolStartMessage(toolName: string, args: Record<string, unknown>): string {
   switch (toolName) {
     case 'list_files':
-      return `🔍 Listing files in ${args.path || '.'}\n`;
+      const path = args.path as string | undefined || '.';
+      return `🔍 Listing files in ${path}\n`;
     case 'read_file':
-      return `📁 Reading ${args.path}\n`;
+      const readPath = args.path as string | undefined || '';
+      return `📁 Reading ${readPath}\n`;
     case 'edit_file':
-      return `📝 Writing to ${args.path}\n`;
+      const editPath = args.path as string | undefined || '';
+      return `📝 Writing to ${editPath}\n`;
     case 'grep_files':
-      return `🔎 Searching for '${args.pattern}'\n`;
+      const pattern = args.pattern as string | undefined || '';
+      return `🔎 Searching for '${pattern}'\n`;
     case 'run_linter':
       return `🔧 Running linter\n`;
     case 'check_status':
@@ -56,40 +60,53 @@ function getToolStartMessage(toolName: string, args: any): string {
   }
 }
 
-function getToolResultMessage(toolName: string, result: any): string {
+function getToolResultMessage(toolName: string, result: Record<string, unknown>): string {
   switch (toolName) {
     case 'list_files':
-      const fileCount = result.files?.length || 0;
+      const files = result.files as unknown[] | undefined;
+      const fileCount = files?.length || 0;
       return `Found ${fileCount} items\n`;
     case 'read_file':
-      const lines = result.lines || 0;
-      return `Read ${lines} lines from ${result.path}\n`;
+      const lines = result.lines as number | undefined || 0;
+      const path = result.path as string | undefined || '';
+      return `Read ${lines} lines from ${path}\n`;
     case 'edit_file':
-      return result.success ? `✓ Updated ${result.path}\n` : `❌ Failed to update ${result.path}\n`;
+      const success = result.success as boolean | undefined;
+      const editPath = result.path as string | undefined || '';
+      return success ? `✓ Updated ${editPath}\n` : `❌ Failed to update ${editPath}\n`;
     case 'grep_files':
-      const matches = result.results?.length || 0;
-      return `Found ${matches} matches for '${result.pattern}'\n`;
+      const results = result.results as unknown[] | undefined;
+      const matches = results?.length || 0;
+      const pattern = result.pattern as string | undefined || '';
+      return `Found ${matches} matches for '${pattern}'\n`;
     case 'run_linter':
-      const errors = result.errors?.length || 0;
-      const warnings = result.warnings?.length || 0;
-      return `Linter found ${errors} errors, ${warnings} warnings\n`;
+      const errors = result.errors as unknown[] | undefined;
+      const warnings = result.warnings as unknown[] | undefined;
+      const errorCount = errors?.length || 0;
+      const warningCount = warnings?.length || 0;
+      return `Linter found ${errorCount} errors, ${warningCount} warnings\n`;
     case 'check_status':
-      return result.error ? `❌ Status check failed\n` : `✓ WebContainer status checked\n`;
+      const error = result.error as boolean | string | undefined;
+      return error ? `❌ Status check failed\n` : `✓ WebContainer status checked\n`;
     default:
       return `✓ ${toolName} completed\n`;
   }
 }
 
 // Wrap a tool to emit status messages
-function wrapToolWithStatus(originalTool: any, toolName: string, statusEmitter: ToolStatusEmitter) {
+function wrapToolWithStatus(originalTool: unknown, toolName: string, statusEmitter: ToolStatusEmitter) {
+  const tool = originalTool as { execute: (...args: unknown[]) => Promise<Record<string, unknown>> };
   return {
-    ...originalTool,
-    execute: async (args: any) => {
+    ...tool,
+    execute: async (...args: unknown[]) => {
+      // Extract the first argument which should contain the parameters
+      const params = args[0] as Record<string, unknown>;
+      
       // Emit start status
-      statusEmitter.emit('toolStart', { toolName, args });
+      statusEmitter.emit('toolStart', { toolName, args: params });
       
       try {
-        const result = await originalTool.execute(args);
+        const result = await tool.execute(...args);
         
         // Emit completion status
         statusEmitter.emit('toolComplete', { toolName, result });
@@ -97,7 +114,7 @@ function wrapToolWithStatus(originalTool: any, toolName: string, statusEmitter: 
         return result;
       } catch (error) {
         // Emit error status
-        statusEmitter.emit('toolError', { toolName, error });
+        statusEmitter.emit('toolError', { toolName, error: error as Error });
         throw error;
       }
     }
@@ -348,8 +365,8 @@ export async function POST(req: Request) {
     const statusEmitter = new ToolStatusEmitter();
 
     // Listen for tool events and write status messages immediately to stream
-    statusEmitter.on('toolStart', (data: ToolStartEvent) => {
-      const { toolName, args } = data;
+    statusEmitter.on('toolStart', (data: unknown) => {
+      const { toolName, args } = data as ToolStartEvent;
       const message = getToolStartMessage(toolName, args);
       console.log(`[Tool Status] ${toolName} starting:`, args);
       
@@ -359,8 +376,8 @@ export async function POST(req: Request) {
       }
     });
 
-    statusEmitter.on('toolComplete', (data: ToolCompleteEvent) => {
-      const { toolName, result } = data;
+    statusEmitter.on('toolComplete', (data: unknown) => {
+      const { toolName, result } = data as ToolCompleteEvent;
       const message = getToolResultMessage(toolName, result);
       console.log(`[Tool Status] ${toolName} completed:`, result);
       
@@ -370,8 +387,8 @@ export async function POST(req: Request) {
       }
     });
 
-    statusEmitter.on('toolError', (data: ToolErrorEvent) => {
-      const { toolName, error } = data;
+    statusEmitter.on('toolError', (data: unknown) => {
+      const { toolName, error } = data as ToolErrorEvent;
       const message = `❌ ${toolName} failed: ${error.message}\n`;
       console.log(`[Tool Status] ${toolName} error:`, error);
       

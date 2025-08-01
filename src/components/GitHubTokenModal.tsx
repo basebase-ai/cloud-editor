@@ -58,7 +58,7 @@ export default function GitHubTokenModal({ opened, onClose, onTokenSubmit }: Git
       } else {
         setError('Invalid GitHub token. Please check your token and try again.');
       }
-    } catch (err) {
+    } catch {
       setError('Failed to validate token. Please check your internet connection and try again.');
     } finally {
       setIsLoading(false);

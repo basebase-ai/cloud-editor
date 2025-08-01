@@ -4,9 +4,9 @@
 interface PendingRequest {
   id: string;
   action: string;
-  params: any;
-  resolve: (value: any) => void;
-  reject: (error: any) => void;
+  params: Record<string, unknown>;
+  resolve: (value: Record<string, unknown>) => void;
+  reject: (error: Error) => void;
   timestamp: number;
 }
 
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
     // Handle new request from server-side tools
     const requestId = crypto.randomUUID();
 
-    return new Promise<Response>((resolve, reject) => {
+    return new Promise<Response>((resolve) => {
       const pendingRequest: PendingRequest = {
         id: requestId,
         action,

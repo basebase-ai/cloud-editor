@@ -44,7 +44,7 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
       }
     };
 
-    const handleWebContainerRequest = async (request: { id: string; action: string; params: any }) => {
+    const handleWebContainerRequest = async (request: { id: string; action: string; params: Record<string, unknown> }) => {
       if (!webcontainerRef.current) {
         await sendResponse(request.id, null, 'WebContainer not available');
         return;
@@ -56,57 +56,63 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
 
         switch (action) {
           case 'listFiles':
-            console.log(`[WebContainer] Listing files in: ${params.path || '.'}`);
+            const pathParam = params.path as string | undefined;
+            console.log(`[WebContainer] Listing files in: ${pathParam || '.'}`);
             try {
-              const dirEntries = await webcontainerRef.current.fs.readdir(params.path || '.', { withFileTypes: true });
-              const files = dirEntries.map((item: any) => ({
+              const dirEntries = await webcontainerRef.current.fs.readdir(pathParam || '.', { withFileTypes: true });
+              const files = dirEntries.map((item: { name: string; isDirectory: () => boolean }) => ({
                 name: item.name,
                 type: item.isDirectory() ? 'directory' : 'file'
               }));
-              console.log(`[WebContainer] Found ${files.length} items in ${params.path || '.'}:`, 
+              console.log(`[WebContainer] Found ${files.length} items in ${pathParam || '.'}:`, 
                 files.map(f => `${f.name}${f.type === 'directory' ? '/' : ''}`).join(', '));
-              result = { files, path: params.path || '.' };
+              result = { files, path: pathParam || '.' };
             } catch (listError) {
-              console.error(`[WebContainer] Failed to list directory ${params.path || '.'}:`, listError);
+              console.error(`[WebContainer] Failed to list directory ${pathParam || '.'}:`, listError);
               throw listError;
             }
             break;
 
           case 'readFile':
-            console.log(`[WebContainer] Reading file: ${params.path}`);
+            const readPath = params.path as string;
+            console.log(`[WebContainer] Reading file: ${readPath}`);
             try {
-              const content = await webcontainerRef.current.fs.readFile(params.path, 'utf-8');
-              console.log(`[WebContainer] Successfully read ${params.path} (${content.length} characters)`);
-              result = { content, path: params.path };
+              const content = await webcontainerRef.current.fs.readFile(readPath, 'utf-8');
+              console.log(`[WebContainer] Successfully read ${readPath} (${content.length} characters)`);
+              result = { content, path: readPath };
             } catch (fileError) {
-              console.error(`[WebContainer] Failed to read file ${params.path}:`, fileError);
+              console.error(`[WebContainer] Failed to read file ${readPath}:`, fileError);
               throw fileError;
             }
             break;
 
           case 'writeFile':
-            console.log(`[WebContainer] Writing file: ${params.path} (${params.content.length} characters)`);
+            const writePath = params.path as string;
+            const writeContent = params.content as string;
+            console.log(`[WebContainer] Writing file: ${writePath} (${writeContent.length} characters)`);
             try {
-              await webcontainerRef.current.fs.writeFile(params.path, params.content);
-              console.log(`[WebContainer] Successfully wrote ${params.path}`);
-              result = { success: true, path: params.path };
+              await webcontainerRef.current.fs.writeFile(writePath, writeContent);
+              console.log(`[WebContainer] Successfully wrote ${writePath}`);
+              result = { success: true, path: writePath };
               
               // Verify the file was written by reading it back
               try {
-                const verification = await webcontainerRef.current.fs.readFile(params.path, 'utf-8');
-                console.log(`[WebContainer] Verification: File ${params.path} now contains ${verification.length} characters`);
+                const verification = await webcontainerRef.current.fs.readFile(writePath, 'utf-8');
+                console.log(`[WebContainer] Verification: File ${writePath} now contains ${verification.length} characters`);
               } catch (verifyError) {
-                console.warn(`[WebContainer] Could not verify file write for ${params.path}:`, verifyError);
+                console.warn(`[WebContainer] Could not verify file write for ${writePath}:`, verifyError);
               }
             } catch (writeError) {
-              console.error(`[WebContainer] Failed to write file ${params.path}:`, writeError);
+              console.error(`[WebContainer] Failed to write file ${writePath}:`, writeError);
               throw writeError;
             }
             break;
 
           case 'searchFiles':
             // Simple grep implementation
-            result = await searchInFiles(webcontainerRef.current, params.pattern, params.files);
+            const searchPattern = params.pattern as string;
+            const searchFiles = params.files as string;
+            result = await searchInFiles(webcontainerRef.current, searchPattern, searchFiles);
             break;
 
           case 'checkStatus':
@@ -121,13 +127,13 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
                 const packageJson = await webcontainerRef.current.fs.readFile('package.json', 'utf-8');
                 const pkg = JSON.parse(packageJson);
                 packageInfo = `Package: ${pkg.name || 'unnamed'} v${pkg.version || 'unknown'}`;
-              } catch (e) {
+              } catch {
                 packageInfo = 'Could not read package.json';
               }
               
               // List root directory
               const rootFiles = await webcontainerRef.current.fs.readdir('.', { withFileTypes: true });
-              const fileList = rootFiles.map((item: any) => 
+              const fileList = rootFiles.map((item: { name: string; isDirectory: () => boolean }) => 
                 `${item.name}${item.isDirectory() ? '/' : ''}`
               ).join(', ');
               
@@ -156,7 +162,7 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
       }
     };
 
-    const sendResponse = async (responseId: string, result: any, error: string | null) => {
+    const sendResponse = async (responseId: string, result: Record<string, unknown> | null, error: string | null) => {
       try {
         await fetch('/api/webcontainer', {
           method: 'POST',
@@ -211,14 +217,14 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
                       });
                     }
                   });
-                } catch (fileError) {
+                } catch {
                   // Skip files that can't be read (binary, permissions, etc.)
                   console.log(`[WebContainer] Skipping unreadable file: ${fullPath}`);
                 }
               }
             }
           }
-        } catch (dirError) {
+        } catch {
           console.log(`[WebContainer] Skipping unreadable directory: ${dirPath}`);
         }
       };
@@ -243,7 +249,7 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
         clearInterval(pollInterval);
       }
     };
-  }, [isLoading]);
+  }, [isLoading, url]);
 
   // Monitor repoUrl changes to trigger re-initialization if needed
   useEffect(() => {
@@ -313,6 +319,7 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
     } finally {
       isBootingRef.current = false;
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repoUrl, githubToken, basebaseToken]);
 
   const cloneRepository = async (webcontainer: WebContainer, repoUrl: string, token: string): Promise<void> => {
@@ -382,7 +389,7 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
     webcontainer: WebContainer, 
     owner: string, 
     repo: string, 
-    tree: any[], 
+    tree: { path: string; type: string; size: number }[], 
     token: string
   ): Promise<void> => {
     console.log(`Downloading ${tree.length} files...`);
@@ -396,7 +403,16 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const fileStructure: any = {};
+    interface FileStructure {
+      [key: string]: {
+        file?: {
+          contents: string | Uint8Array;
+        };
+        directory?: FileStructure;
+      };
+    }
+    
+    const fileStructure: FileStructure = {};
     
     // Filter only files (not directories) and exclude very large files
     const files = tree.filter(item => item.type === 'blob' && item.size < 1000000); // Skip files > 1MB
@@ -478,7 +494,7 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
                 if (!current[part]) {
                   current[part] = { directory: {} };
                 }
-                current = current[part].directory;
+                current = current[part].directory!;
               }
               
               const fileName = pathParts[pathParts.length - 1];
@@ -508,7 +524,7 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
     console.log('File structure to mount:', Object.keys(fileStructure));
     
     try {
-      await webcontainer.mount(fileStructure);
+      await webcontainer.mount(fileStructure as unknown as Parameters<typeof webcontainer.mount>[0]);
       console.log('Files mounted successfully');
     } catch (mountErr) {
       console.error('Failed to mount files:', mountErr);
@@ -631,7 +647,7 @@ export default defineConfig({
     });
 
     // Wait for server to be ready
-    webcontainer.on('server-ready', (port, url) => {
+    webcontainer.on('server-ready', (_port, url) => {
       setUrl(url);
       setIsLoading(false);
       setStatus('Development server ready');
@@ -713,7 +729,7 @@ export default defineConfig({
       webcontainerRef.current = null;
       isBootingRef.current = false;
     };
-  }, [bootWebContainer]); // Re-runs when bootWebContainer changes (due to prop changes)
+  }, [bootWebContainer, repoUrl, githubToken, basebaseToken]); // Re-runs when bootWebContainer changes (due to prop changes)
 
   if (error) {
     return (

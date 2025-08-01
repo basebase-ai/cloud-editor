@@ -156,7 +156,7 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
     if (lastMessage && lastMessage.role === 'assistant') {
       scrollToBottom();
     }
-  }, [messages.map(m => m.content).join('')]);
+  }, [messages]);
 
   const formatMessage = (content: string) => {
     const lines = content.split('\n');
