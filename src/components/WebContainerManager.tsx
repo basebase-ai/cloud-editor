@@ -733,7 +733,7 @@ export default defineConfig({
 
   if (error) {
     return (
-      <Box h="100vh" p="md">
+      <Box h="100%" p="md">
         <Alert icon={<IconAlertCircle size={16} />} color="red" mb="md">
           <Text fw={500} mb="xs">WebContainer Error</Text>
           <Text size="sm" mb="md">{error}</Text>
@@ -752,7 +752,7 @@ export default defineConfig({
 
   if (isLoading) {
     return (
-      <Box h="100vh" display="flex" style={{ alignItems: 'center', justifyContent: 'center' }}>
+      <Box h="100%" display="flex" style={{ alignItems: 'center', justifyContent: 'center' }}>
         <Stack align="center" gap="md">
           <Loader size="lg" />
           <Text size="sm" c="dimmed">{status}</Text>
@@ -762,7 +762,7 @@ export default defineConfig({
   }
 
   return (
-    <Box h="100vh">
+    <Box h="100%" w="100%">
       {url ? (
         <iframe
           ref={iframeRef}
