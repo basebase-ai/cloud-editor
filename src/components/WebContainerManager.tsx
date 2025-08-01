@@ -91,6 +91,19 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
             const writeContent = params.content as string;
             console.log(`[WebContainer] Writing file: ${writePath} (${writeContent.length} characters)`);
             try {
+              // Create parent directories if they don't exist
+              const pathParts = writePath.split('/');
+              if (pathParts.length > 1) {
+                const dirPath = pathParts.slice(0, -1).join('/');
+                try {
+                  await webcontainerRef.current.fs.mkdir(dirPath, { recursive: true });
+                  console.log(`[WebContainer] Created directory: ${dirPath}`);
+                } catch (mkdirError) {
+                  // Directory might already exist, that's okay
+                  console.log(`[WebContainer] Directory creation for ${dirPath}:`, mkdirError);
+                }
+              }
+              
               await webcontainerRef.current.fs.writeFile(writePath, writeContent);
               console.log(`[WebContainer] Successfully wrote ${writePath}`);
               result = { success: true, path: writePath };
@@ -113,6 +126,21 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
             const searchPattern = params.pattern as string;
             const searchFiles = params.files as string;
             result = await searchInFiles(webcontainerRef.current, searchPattern, searchFiles);
+            break;
+
+          case 'deleteFile':
+            const deletePath = params.path as string;
+            console.log(`[WebContainer] Deleting file: ${deletePath}`);
+            try {
+              // Check if file exists first
+              await webcontainerRef.current.fs.access(deletePath);
+              await webcontainerRef.current.fs.unlink(deletePath);
+              console.log(`[WebContainer] Successfully deleted ${deletePath}`);
+              result = { success: true, path: deletePath };
+            } catch (deleteError) {
+              console.error(`[WebContainer] Failed to delete file ${deletePath}:`, deleteError);
+              throw deleteError;
+            }
             break;
 
           case 'replaceLines':

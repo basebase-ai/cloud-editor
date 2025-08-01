@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation';
 import WebContainerManager from '@/components/WebContainerManager';
 import ChatInterface from '@/components/ChatInterface';
 import GitHubTokenModal from '@/components/GitHubTokenModal';
+import CommitModal from '@/components/CommitModal';
 
 export default function ProjectPage() {
   const params = useParams();
@@ -16,6 +17,7 @@ export default function ProjectPage() {
   const [basebaseToken, setBasebaseToken] = useState<string>('');
   const [isInitialized, setIsInitialized] = useState<boolean>(false);
   const [showTokenModal, setShowTokenModal] = useState<boolean>(false);
+  const [showCommitModal, setShowCommitModal] = useState<boolean>(false);
 
   // Debug logging for state changes
   useEffect(() => {
@@ -112,6 +114,7 @@ export default function ProjectPage() {
             variant={hasChanges ? 'filled' : 'light'} 
             disabled={!hasChanges}
             color="blue"
+            onClick={() => setShowCommitModal(true)}
           >
             Publish
           </Button>
@@ -140,6 +143,13 @@ export default function ProjectPage() {
         opened={showTokenModal}
         onClose={handleModalClose}
         onTokenSubmit={handleTokenSubmit}
+      />
+
+      <CommitModal
+        opened={showCommitModal}
+        onClose={() => setShowCommitModal(false)}
+        githubToken={githubToken}
+        repoUrl={repoUrl}
       />
     </AppShell>
   );

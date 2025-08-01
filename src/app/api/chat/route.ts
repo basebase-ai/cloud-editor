@@ -45,9 +45,9 @@ function getToolStartMessage(toolName: string, args: Record<string, unknown>): s
     case 'read_file':
       const readPath = args.path as string | undefined || '';
       return `📁 Reading ${readPath}\n`;
-    case 'edit_file':
-      const editPath = args.path as string | undefined || '';
-      return `📝 Writing to ${editPath}\n`;
+    case 'write_file':
+      const writePath = args.path as string | undefined || '';
+      return `📝 Writing to ${writePath}\n`;
     case 'grep_files':
       const pattern = args.pattern as string | undefined || '';
       return `🔎 Searching for '${pattern}'\n`;
@@ -58,6 +58,9 @@ function getToolStartMessage(toolName: string, args: Record<string, unknown>): s
     case 'replace_lines':
       const replacePath = args.path as string | undefined || '';
       return `🔧 Replacing text in ${replacePath}\n`;
+    case 'delete_file':
+      const deleteFilePath = args.path as string | undefined || '';
+      return `🗑️ Deleting ${deleteFilePath}\n`;
     default:
       return `🔄 Running ${toolName}\n`;
   }
@@ -73,10 +76,10 @@ function getToolResultMessage(toolName: string, result: Record<string, unknown>)
       const lines = result.lines as number | undefined || 0;
       const path = result.path as string | undefined || '';
       return `Read ${lines} lines from ${path}\n`;
-    case 'edit_file':
+    case 'write_file':
       const success = result.success as boolean | undefined;
-      const editPath = result.path as string | undefined || '';
-      return success ? `✓ Updated ${editPath}\n` : `❌ Failed to update ${editPath}\n`;
+      const writeResultPath = result.path as string | undefined || '';
+      return success ? `✓ Written ${writeResultPath}\n` : `❌ Failed to write ${writeResultPath}\n`;
     case 'grep_files':
       const results = result.results as unknown[] | undefined;
       const matches = results?.length || 0;
@@ -102,6 +105,10 @@ function getToolResultMessage(toolName: string, result: Record<string, unknown>)
       } else {
         return `❌ Failed to replace text in ${replacePath}\n`;
       }
+    case 'delete_file':
+      const deleteSuccess = result.success as boolean | undefined;
+      const deleteResultPath = result.path as string | undefined || '';
+      return deleteSuccess ? `✓ Deleted ${deleteResultPath}\n` : `❌ Failed to delete ${deleteResultPath}\n`;
     default:
       return `✓ ${toolName} completed\n`;
   }
@@ -232,36 +239,36 @@ const readFileTool = tool({
   },
 });
 
-const editFileTool = tool({
-  description: "Edit or create a file with new content",
+const writeFileTool = tool({
+  description: "Write content to a file. Creates a new file if it doesn't exist, or replaces the entire contents of an existing file. Automatically creates parent directories if needed.",
   inputSchema: z.object({
-    path: z.string().describe("Path to the file to edit"),
-    content: z.string().describe("New content for the file"),
+    path: z.string().describe("Path to the file to write (e.g., 'src/components/NewComponent.tsx')"),
+    content: z.string().describe("Complete content to write to the file"),
   }),
   execute: async ({ path, content }) => {
     console.log(
-      `[Tool] edit_file called with path: ${path}, content length: ${content.length}`
+      `[Tool] write_file called with path: ${path}, content length: ${content.length}`
     );
     try {
       const result = await callWebContainer("writeFile", { path, content });
-      console.log(`[Tool] edit_file result:`, result);
+      console.log(`[Tool] write_file result:`, result);
       return {
         success: result.success,
         path: result.path,
-        message: `File ${path} updated successfully`,
+        message: `File ${path} written successfully`,
         contentLength: content.length,
-        type: "edit_file",
+        type: "write_file",
       };
     } catch (error) {
-      console.error(`[Tool] edit_file error:`, error);
+      console.error(`[Tool] write_file error:`, error);
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
       return {
         success: false,
         path,
-        message: `❌ Failed to update file ${path}: ${errorMessage}`,
+        message: `❌ Failed to write file ${path}: ${errorMessage}`,
         contentLength: content.length,
-        type: "edit_file",
+        type: "write_file",
         error: errorMessage,
       };
     }
@@ -353,6 +360,36 @@ const checkStatusTool = tool({
         type: "check_status",
         error: errorMessage,
         message: `❌ Could not check status: ${errorMessage}`,
+      };
+    }
+  },
+});
+
+const deleteFileTool = tool({
+  description: "Delete a file from the project. Use with caution as this cannot be undone.",
+  inputSchema: z.object({
+    path: z.string().describe("Path to the file to delete"),
+  }),
+  execute: async ({ path }) => {
+    console.log(`[Tool] delete_file called with path: ${path}`);
+    try {
+      const result = await callWebContainer("deleteFile", { path });
+      console.log(`[Tool] delete_file result:`, result);
+      return {
+        success: result.success,
+        path: result.path,
+        message: `File ${path} deleted successfully`,
+        type: "delete_file",
+      };
+    } catch (error) {
+      console.error(`[Tool] delete_file error:`, error);
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      return {
+        success: false,
+        path,
+        message: `❌ Failed to delete file ${path}: ${errorMessage}`,
+        type: "delete_file",
+        error: errorMessage,
       };
     }
   },
@@ -457,7 +494,8 @@ export async function POST(req: Request) {
     const enhancedTools = {
       list_files: wrapToolWithStatus(listFilesTool, 'list_files', statusEmitter),
       read_file: wrapToolWithStatus(readFileTool, 'read_file', statusEmitter),
-      edit_file: wrapToolWithStatus(editFileTool, 'edit_file', statusEmitter),
+      write_file: wrapToolWithStatus(writeFileTool, 'write_file', statusEmitter),
+      delete_file: wrapToolWithStatus(deleteFileTool, 'delete_file', statusEmitter),
       grep_files: wrapToolWithStatus(grepFilesTool, 'grep_files', statusEmitter),
       run_linter: wrapToolWithStatus(runLinterTool, 'run_linter', statusEmitter),
       check_status: wrapToolWithStatus(checkStatusTool, 'check_status', statusEmitter),
@@ -486,16 +524,18 @@ IMPORTANT: When a user makes their first request, ALWAYS start by gathering proj
 You can help users with their code by:
 1. Analyzing their project structure using list_files
 2. Reading specific files using read_file  
-3. Making code changes using edit_file (for complete file rewrites)
-4. Making targeted changes using replace_lines (more efficient for specific text replacements)
-5. Searching for patterns using grep_files
-6. Running linting to check code quality using run_linter
-7. Checking WebContainer status and debugging with check_status
+3. Writing complete file contents using write_file (creates new files or replaces entire file contents)
+4. Deleting files using delete_file (use with caution - cannot be undone)
+5. Making targeted changes using replace_lines (more efficient for specific text replacements)
+6. Searching for patterns using grep_files
+7. Running linting to check code quality using run_linter
+8. Checking WebContainer status and debugging with check_status
 
-When editing files:
-- Use replace_lines for targeted changes when you need to replace specific multi-line blocks
-- Use edit_file for complete file overwrites or when creating new files
+When working with files:
+- Use write_file to create new files or completely replace the contents of existing files
+- Use replace_lines for targeted changes when you need to replace specific multi-line blocks within existing files
 - replace_lines is more efficient and safer for making precise changes to existing code
+- write_file will overwrite the entire file, so use it when you need to rewrite substantial portions or create new files
 
 Never ask users for basic project information - always explore the codebase first to understand the context, then provide informed assistance.
 
