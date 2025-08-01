@@ -11,9 +11,10 @@ let globalWebContainer: WebContainer | null = null;
 interface WebContainerManagerProps {
   repoUrl: string;
   githubToken: string;
+  basebaseToken: string;
 }
 
-export default function WebContainerManager({ repoUrl, githubToken }: WebContainerManagerProps) {
+export default function WebContainerManager({ repoUrl, githubToken, basebaseToken }: WebContainerManagerProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const webcontainerRef = useRef<WebContainer | null>(null);
   const isBootingRef = useRef<boolean>(false);
@@ -251,7 +252,7 @@ export default function WebContainerManager({ repoUrl, githubToken }: WebContain
 
   useEffect(() => {
     // Token changed, will trigger re-boot if needed
-  }, [githubToken]);
+  }, [githubToken, basebaseToken]);
 
   const bootWebContainer = useCallback(async (): Promise<void> => {
     
@@ -312,7 +313,7 @@ export default function WebContainerManager({ repoUrl, githubToken }: WebContain
     } finally {
       isBootingRef.current = false;
     }
-  }, [repoUrl, githubToken]);
+  }, [repoUrl, githubToken, basebaseToken]);
 
   const cloneRepository = async (webcontainer: WebContainer, repoUrl: string, token: string): Promise<void> => {
     console.log('=== Starting repository download process ===');
@@ -612,10 +613,22 @@ export default defineConfig({
       throw new Error('Failed to install dependencies');
     }
 
-    // Start the dev server
+    // Start the dev server with environment variables
     setStatus('Starting development server...');
     console.log('[Dev Server] Starting npm run dev...');
-    const devProcess = await webcontainer.spawn('npm', ['run', 'dev']);
+    
+    // Set up environment variables for the dev process
+    const env: Record<string, string> = {};
+    
+    // Add BASEBASE_TOKEN if available
+    if (basebaseToken) {
+      env.BASEBASE_TOKEN = basebaseToken;
+      console.log('[Dev Server] Setting BASEBASE_TOKEN environment variable');
+    }
+    
+    const devProcess = await webcontainer.spawn('npm', ['run', 'dev'], {
+      env: env
+    });
 
     // Wait for server to be ready
     webcontainer.on('server-ready', (port, url) => {
@@ -678,7 +691,8 @@ export default defineConfig({
       isBooting: isBootingRef.current,
       hasInitialized: hasInitialized.current,
       repoUrl, 
-      githubToken: githubToken ? 'provided' : 'not provided'
+      githubToken: githubToken ? 'provided' : 'not provided',
+      basebaseToken: basebaseToken ? 'provided' : 'not provided'
     });
 
     // Prevent React Strict Mode double execution

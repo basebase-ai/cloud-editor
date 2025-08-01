@@ -301,7 +301,7 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
               <Group gap="xs">
                 <Loader size="xs" />
                 <Text size="sm" c="dimmed">
-                  Processing your request...
+                  Thinking...
                 </Text>
               </Group>
             </Box>
