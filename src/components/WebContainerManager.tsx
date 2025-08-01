@@ -55,27 +55,93 @@ export default function WebContainerManager({ repoUrl, githubToken }: WebContain
 
         switch (action) {
           case 'listFiles':
-            result = await webcontainerRef.current.fs.readdir(params.path || '.', { withFileTypes: true });
-            const files = result.map((item: any) => ({
-              name: item.name,
-              type: item.isDirectory() ? 'directory' : 'file'
-            }));
-            result = { files, path: params.path || '.' };
+            console.log(`[WebContainer] Listing files in: ${params.path || '.'}`);
+            try {
+              const dirEntries = await webcontainerRef.current.fs.readdir(params.path || '.', { withFileTypes: true });
+              const files = dirEntries.map((item: any) => ({
+                name: item.name,
+                type: item.isDirectory() ? 'directory' : 'file'
+              }));
+              console.log(`[WebContainer] Found ${files.length} items in ${params.path || '.'}:`, 
+                files.map(f => `${f.name}${f.type === 'directory' ? '/' : ''}`).join(', '));
+              result = { files, path: params.path || '.' };
+            } catch (listError) {
+              console.error(`[WebContainer] Failed to list directory ${params.path || '.'}:`, listError);
+              throw listError;
+            }
             break;
 
           case 'readFile':
-            const content = await webcontainerRef.current.fs.readFile(params.path, 'utf-8');
-            result = { content, path: params.path };
+            console.log(`[WebContainer] Reading file: ${params.path}`);
+            try {
+              const content = await webcontainerRef.current.fs.readFile(params.path, 'utf-8');
+              console.log(`[WebContainer] Successfully read ${params.path} (${content.length} characters)`);
+              result = { content, path: params.path };
+            } catch (fileError) {
+              console.error(`[WebContainer] Failed to read file ${params.path}:`, fileError);
+              throw fileError;
+            }
             break;
 
           case 'writeFile':
-            await webcontainerRef.current.fs.writeFile(params.path, params.content);
-            result = { success: true, path: params.path };
+            console.log(`[WebContainer] Writing file: ${params.path} (${params.content.length} characters)`);
+            try {
+              await webcontainerRef.current.fs.writeFile(params.path, params.content);
+              console.log(`[WebContainer] Successfully wrote ${params.path}`);
+              result = { success: true, path: params.path };
+              
+              // Verify the file was written by reading it back
+              try {
+                const verification = await webcontainerRef.current.fs.readFile(params.path, 'utf-8');
+                console.log(`[WebContainer] Verification: File ${params.path} now contains ${verification.length} characters`);
+              } catch (verifyError) {
+                console.warn(`[WebContainer] Could not verify file write for ${params.path}:`, verifyError);
+              }
+            } catch (writeError) {
+              console.error(`[WebContainer] Failed to write file ${params.path}:`, writeError);
+              throw writeError;
+            }
             break;
 
           case 'searchFiles':
             // Simple grep implementation
             result = await searchInFiles(webcontainerRef.current, params.pattern, params.files);
+            break;
+
+          case 'checkStatus':
+            console.log(`[WebContainer] Checking system status...`);
+            try {
+              // Get basic project info
+              const cwd = webcontainerRef.current.workdir;
+              
+              // Check if package.json exists
+              let packageInfo = 'No package.json found';
+              try {
+                const packageJson = await webcontainerRef.current.fs.readFile('package.json', 'utf-8');
+                const pkg = JSON.parse(packageJson);
+                packageInfo = `Package: ${pkg.name || 'unnamed'} v${pkg.version || 'unknown'}`;
+              } catch (e) {
+                packageInfo = 'Could not read package.json';
+              }
+              
+              // List root directory
+              const rootFiles = await webcontainerRef.current.fs.readdir('.', { withFileTypes: true });
+              const fileList = rootFiles.map((item: any) => 
+                `${item.name}${item.isDirectory() ? '/' : ''}`
+              ).join(', ');
+              
+              result = {
+                workdir: cwd,
+                packageInfo,
+                rootFiles: fileList,
+                serverUrl: url || 'No server running',
+                serverStatus: url ? 'Running' : 'Not running',
+                message: `📊 WebContainer Status:\n• Working directory: ${cwd}\n• ${packageInfo}\n• Root files: ${fileList}\n• Server: ${url ? `Running at ${url}` : 'Not running'}`
+              };
+            } catch (statusError) {
+              console.error(`[WebContainer] Failed to get status:`, statusError);
+              throw statusError;
+            }
             break;
 
           default:
@@ -499,10 +565,37 @@ export default defineConfig({
   };
 
   const startDevServer = async (webcontainer: WebContainer): Promise<void> => {
+    // First, let's see what's in the project
+    try {
+      const packageJson = await webcontainer.fs.readFile('package.json', 'utf-8');
+      console.log('[Dev Server] package.json contents:', packageJson);
+      
+      const pkg = JSON.parse(packageJson);
+      console.log('[Dev Server] Available scripts:', Object.keys(pkg.scripts || {}));
+      
+      if (!pkg.scripts?.dev) {
+        console.warn('[Dev Server] No "dev" script found in package.json');
+      }
+    } catch (err) {
+      console.error('[Dev Server] Could not read package.json:', err);
+    }
+
     // Install dependencies first
     setStatus('Installing dependencies...');
+    console.log('[Dev Server] Starting npm install...');
     const installProcess = await webcontainer.spawn('npm', ['install']);
+    
+    // Log install output
+    installProcess.output.pipeTo(
+      new WritableStream({
+        write(data) {
+          console.log('[npm install]:', data);
+        }
+      })
+    );
+    
     const installExitCode = await installProcess.exit;
+    console.log(`[Dev Server] npm install exited with code: ${installExitCode}`);
     
     if (installExitCode !== 0) {
       throw new Error('Failed to install dependencies');
@@ -510,6 +603,7 @@ export default defineConfig({
 
     // Start the dev server
     setStatus('Starting development server...');
+    console.log('[Dev Server] Starting npm run dev...');
     const devProcess = await webcontainer.spawn('npm', ['run', 'dev']);
 
     // Wait for server to be ready
@@ -519,14 +613,22 @@ export default defineConfig({
       setStatus('Development server ready');
     });
 
-    // Handle server errors
+    // Log all dev server output
     devProcess.output.pipeTo(
       new WritableStream({
         write(data) {
-          // WebContainer output logged to console
+          console.log('[Dev Server]:', data);
         }
       })
     );
+
+    // Log when dev process exits
+    devProcess.exit.then((exitCode) => {
+      console.log(`[Dev Server] Process exited with code: ${exitCode}`);
+      if (exitCode !== 0) {
+        setError(`Development server exited with code ${exitCode}`);
+      }
+    });
   };
 
   const retry = useCallback((): void => {

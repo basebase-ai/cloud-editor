@@ -145,22 +145,38 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
   const formatMessage = (content: string) => {
     // Simple markdown-like formatting for steps
     return content.split('\n').map((line, index) => {
+      // Tool progress indicators (lines with emojis like 🔍, 📁, etc.)
+      if (line.match(/^[🔍📁📝🔧🔎⚡]\s/)) {
+        return (
+          <Text key={index} size="sm" c="blue.6" fw={500} mb={1} style={{ fontStyle: 'italic' }}>
+            {line}
+          </Text>
+        );
+      }
+      // Tool result summaries (lines starting with "Found", "Read", "Updated", etc.)
+      if (line.match(/^(Found|Read|Updated|Created|Searched|Listed)\s/)) {
+        return (
+          <Text key={index} size="sm" c="green.7" fw={500} mb={1}>
+            ✓ {line}
+          </Text>
+        );
+      }
       if (line.startsWith('**') && line.endsWith('**')) {
         return (
-          <Text key={index} fw={600} size="sm" mb={4}>
+          <Text key={index} fw={600} size="sm" mb={2}>
             {line.slice(2, -2)}
           </Text>
         );
       }
       if (line.startsWith('- ')) {
         return (
-          <Text key={index} size="sm" c="dimmed" mb={2}>
+          <Text key={index} size="sm" c="dimmed" mb={1}>
             {line}
           </Text>
         );
       }
       return (
-        <Text key={index} size="sm" mb={2}>
+        <Text key={index} size="sm" mb={1}>
           {line}
         </Text>
       );
@@ -182,17 +198,17 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
       {/* Messages Area */}
       <ScrollArea 
         flex={1} 
-        p="md"
+        p="sm"
         ref={scrollAreaRef}
         type="hover"
         style={{ minHeight: 0 }}
       >
-        <Stack gap="md">
+        <Stack gap="xs">
           {messages.map((message) => (
             message.role === 'user' ? (
               <Paper
                 key={message.id}
-                p="md"
+                p="sm"
                 radius="md"
                 bg="blue.0"
               >
@@ -201,7 +217,7 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
                 </Box>
               </Paper>
             ) : (
-              <Box key={message.id} p="md">
+              <Box key={message.id} py="xs" px="sm">
                 <Box>
                   {formatMessage(message.content)}
                 </Box>
@@ -210,7 +226,7 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
           ))}
 
           {isLoading && (
-            <Box p="md">
+            <Box py="xs" px="sm">
               <Group gap="xs">
                 <Loader size="xs" />
                 <Text size="sm" c="dimmed">

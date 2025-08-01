@@ -86,12 +86,14 @@ const readFileTool = tool({
       };
     } catch (error) {
       console.error(`[Tool] read_file error:`, error);
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
       return {
-        content: "",
+        content: `❌ Could not read file: ${errorMessage}`,
         path,
         lines: 0,
         type: "read_file",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: errorMessage,
       };
     }
   },
@@ -119,15 +121,15 @@ const editFileTool = tool({
       };
     } catch (error) {
       console.error(`[Tool] edit_file error:`, error);
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
       return {
         success: false,
         path,
-        message: `Failed to update file ${path}: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
+        message: `❌ Failed to update file ${path}: ${errorMessage}`,
         contentLength: content.length,
         type: "edit_file",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: errorMessage,
       };
     }
   },
@@ -198,6 +200,31 @@ const runLinterTool = tool({
   },
 });
 
+const checkStatusTool = tool({
+  description: "Check WebContainer status, running processes, and project info",
+  inputSchema: z.object({}),
+  execute: async () => {
+    console.log(`[Tool] check_status called`);
+    try {
+      const result = await callWebContainer("checkStatus", {});
+      console.log(`[Tool] check_status result:`, result);
+      return {
+        type: "check_status",
+        ...result,
+      };
+    } catch (error) {
+      console.error(`[Tool] check_status error:`, error);
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      return {
+        type: "check_status",
+        error: errorMessage,
+        message: `❌ Could not check status: ${errorMessage}`,
+      };
+    }
+  },
+});
+
 export async function POST(req: Request) {
   try {
     const { messages } = await req.json();
@@ -220,6 +247,7 @@ export async function POST(req: Request) {
         edit_file: editFileTool,
         grep_files: grepFilesTool,
         run_linter: runLinterTool,
+        check_status: checkStatusTool,
       },
       system: `You are an AI coding assistant operating within a WebContainer environment. 
       
@@ -229,16 +257,23 @@ You can help users with their code by:
 3. Making code changes using edit_file
 4. Searching for patterns using grep_files
 5. Running linting to check code quality using run_linter
+6. Checking WebContainer status and debugging with check_status
 
 When helping users:
 - Take multiple steps to understand the codebase first
-- Show your thinking process with intermediate messages
+- Always announce what tool you're about to use (e.g., "🔍 Searching for 'import'..." or "📁 Reading package.json...")
 - Use tools to gather information before making changes
-- Explain what you're doing at each step
+- After each tool call, briefly summarize what you found (e.g., "Found 3 import statements" or "Package.json contains 12 dependencies")
+- If changes don't appear to take effect (like file edits not showing in the browser), use check_status to debug
+- Show your progress step by step
 - Provide clear summaries of changes made
 
-Always be thorough and methodical in your approach. Break down complex requests into smaller steps and show your progress.`,
+Always be thorough and methodical in your approach. Break down complex requests into smaller steps and show your progress with brief tool announcements.`,
       stopWhen: stepCountIs(5),
+      experimental_telemetry: {
+        isEnabled: true,
+        functionId: "webcontainer-tools",
+      },
     });
     console.log(`[Chat API] StreamText completed, returning response`);
 
