@@ -116,6 +116,9 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
                 ? { ...msg, content: msg.content + chunk }
                 : msg
             ));
+            
+            // Scroll after each chunk to ensure we stay at bottom during streaming
+            setTimeout(scrollToBottom, 0);
           }
         }
       }
@@ -129,8 +132,8 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
     }
   };
 
-  useEffect(() => {
-    // Auto-scroll to bottom when new messages arrive
+  // Auto-scroll function
+  const scrollToBottom = () => {
     if (scrollAreaRef.current) {
       const viewport = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement;
       if (viewport) {
@@ -140,7 +143,20 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
         });
       }
     }
+  };
+
+  // Auto-scroll when messages change
+  useEffect(() => {
+    scrollToBottom();
   }, [messages]);
+
+  // Auto-scroll when streaming content updates (content length changes)
+  useEffect(() => {
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage && lastMessage.role === 'assistant') {
+      scrollToBottom();
+    }
+  }, [messages.map(m => m.content).join('')]);
 
   const formatMessage = (content: string) => {
     const lines = content.split('\n');
@@ -169,13 +185,13 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
               {language || 'code'}
             </Text>
             <Box
-              bg="gray.0"
+              bg="var(--mantine-color-gray-1)"
               p="sm"
               style={{
                 borderRadius: '6px',
                 fontFamily: 'Monaco, Menlo, "Ubuntu Mono", monospace',
                 fontSize: '13px',
-                border: '1px solid var(--mantine-color-gray-3)',
+                border: '1px solid var(--mantine-color-gray-4)',
                 overflow: 'auto'
               }}
             >
@@ -238,7 +254,7 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
   return (
     <Stack h="100vh" gap={0} style={{ overflow: 'hidden' }}>
       {/* Chat Header */}
-      <Box p="md" style={{ borderBottom: '1px solid var(--mantine-color-gray-3)', flexShrink: 0 }}>
+      <Box p="md" style={{ borderBottom: '1px solid var(--mantine-color-gray-4)', flexShrink: 0 }}>
         <Text size="sm" fw={500}>AI Assistant</Text>
         {repoUrl && (
           <Text size="xs" c="dimmed" truncate>
@@ -262,7 +278,10 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
                 key={message.id}
                 p="sm"
                 radius="md"
-                bg="blue.0"
+                bg="transparent"
+                style={{
+                  border: '1px solid var(--mantine-color-blue-6)',
+                }}
               >
                 <Box>
                   {formatMessage(message.content)}
@@ -291,7 +310,7 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
       </ScrollArea>
 
       {/* Input Area */}
-      <Box p="md" style={{ borderTop: '1px solid var(--mantine-color-gray-3)', flexShrink: 0 }}>
+      <Box p="md" style={{ borderTop: '1px solid var(--mantine-color-gray-4)', flexShrink: 0 }}>
         <form onSubmit={handleSubmit}>
           <Group gap="xs">
             <TextInput

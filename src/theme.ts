@@ -13,6 +13,9 @@ export const theme = createTheme({
   fontFamily:
     'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
 
+  /** Auto color scheme based on system preference */
+  autoContrast: true,
+
   /** Customize colors for better modern appearance */
   colors: {
     // Custom brand colors
