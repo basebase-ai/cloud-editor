@@ -18,21 +18,8 @@ export async function POST(request: Request) {
       });
     }
 
-    const [, owner, repo] = match;
-    const cleanRepoName = repo.replace('.git', '');
-
-    // This is a WebContainer bridge request - we need to get git status from the client
-    const requestId = crypto.randomUUID();
-    
-    // Store the git status request for the WebContainer to pick up
-    const gitStatusRequest = {
-      id: requestId,
-      action: 'gitStatus',
-      params: { githubToken, owner, repo: cleanRepoName }
-    };
-
     // For now, return mock data since we don't have git integration in WebContainer yet
-    // In a real implementation, this would communicate with the WebContainer
+    // In a real implementation, this would parse the repo URL and communicate with the WebContainer to get actual git status
     const mockFiles = [
       { path: 'src/components/ChatInterface.tsx', status: 'modified' as const },
       { path: 'src/components/WebContainerManager.tsx', status: 'modified' as const },

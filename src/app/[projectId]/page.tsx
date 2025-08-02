@@ -1,6 +1,7 @@
 'use client';
 
-import { AppShell, Button, Text, Group } from '@mantine/core';
+import { AppShell, Button, Text, Group, ActionIcon, Tooltip } from '@mantine/core';
+import { IconRefresh } from '@tabler/icons-react';
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import WebContainerManager from '@/components/WebContainerManager';
@@ -18,6 +19,7 @@ export default function ProjectPage() {
   const [isInitialized, setIsInitialized] = useState<boolean>(false);
   const [showTokenModal, setShowTokenModal] = useState<boolean>(false);
   const [showCommitModal, setShowCommitModal] = useState<boolean>(false);
+  const [isRefreshing] = useState<boolean>(false);
 
   // Debug logging for state changes
   useEffect(() => {
@@ -98,6 +100,15 @@ export default function ProjectPage() {
     setShowTokenModal(false);
   };
 
+  const handleRefresh = () => {
+    // Add a message to the chat asking the AI to restart the dev server
+    // This way the user can see what's happening and the AI can handle it properly
+    
+    // We could auto-add this message to the chat, but it's better to let the user 
+    // ask the AI directly. For now, just show a tooltip suggesting they ask the AI.
+    console.log('Refresh requested - user should ask AI to restart dev server');
+  };
+
   return (
     <AppShell
       header={{ height: 60 }}
@@ -110,14 +121,27 @@ export default function ProjectPage() {
             <Text size="lg" fw={600}>BaseBase Editor</Text>
             <Text size="xs" c="dimmed">{projectId}</Text>
           </div>
-          <Button 
-            variant={hasChanges ? 'filled' : 'light'} 
-            disabled={!hasChanges}
-            color="blue"
-            onClick={() => setShowCommitModal(true)}
-          >
-            Publish
-          </Button>
+          <Group gap="xs">
+            <Tooltip label="Restart dev server">
+              <ActionIcon
+                variant="light"
+                color="gray"
+                size="lg"
+                onClick={handleRefresh}
+                loading={isRefreshing}
+              >
+                <IconRefresh size={16} />
+              </ActionIcon>
+            </Tooltip>
+            <Button 
+              variant={hasChanges ? 'filled' : 'light'} 
+              disabled={!hasChanges}
+              color="blue"
+              onClick={() => setShowCommitModal(true)}
+            >
+              Publish
+            </Button>
+          </Group>
         </Group>
       </AppShell.Header>
 

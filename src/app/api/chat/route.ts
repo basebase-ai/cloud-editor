@@ -22,9 +22,12 @@ interface ToolErrorEvent {
 class ToolStatusEmitter {
   private listeners: { [key: string]: ((data: unknown) => void)[] } = {};
 
-  emit(event: string, data: ToolStartEvent | ToolCompleteEvent | ToolErrorEvent) {
+  emit(
+    event: string,
+    data: ToolStartEvent | ToolCompleteEvent | ToolErrorEvent
+  ) {
     if (this.listeners[event]) {
-      this.listeners[event].forEach(listener => listener(data));
+      this.listeners[event].forEach((listener) => listener(data));
     }
   }
 
@@ -37,108 +40,142 @@ class ToolStatusEmitter {
 }
 
 // Generate status messages for different tools
-function getToolStartMessage(toolName: string, args: Record<string, unknown>): string {
+function getToolStartMessage(
+  toolName: string,
+  args: Record<string, unknown>
+): string {
   switch (toolName) {
-    case 'list_files':
-      const path = args.path as string | undefined || '.';
+    case "list_files":
+      const path = (args.path as string | undefined) || ".";
       return `🔍 Listing files in ${path}\n`;
-    case 'read_file':
-      const readPath = args.path as string | undefined || '';
+    case "read_file":
+      const readPath = (args.path as string | undefined) || "";
       return `📁 Reading ${readPath}\n`;
-    case 'write_file':
-      const writePath = args.path as string | undefined || '';
+    case "write_file":
+      const writePath = (args.path as string | undefined) || "";
       return `📝 Writing to ${writePath}\n`;
-    case 'grep_files':
-      const pattern = args.pattern as string | undefined || '';
+    case "grep_files":
+      const pattern = (args.pattern as string | undefined) || "";
       return `🔎 Searching for '${pattern}'\n`;
-    case 'run_linter':
+    case "run_linter":
       return `🔧 Running linter\n`;
-    case 'check_status':
+    case "check_status":
       return `⚡ Checking WebContainer status\n`;
-    case 'replace_lines':
-      const replacePath = args.path as string | undefined || '';
+    case "replace_lines":
+      const replacePath = (args.path as string | undefined) || "";
       return `🔧 Replacing text in ${replacePath}\n`;
-    case 'delete_file':
-      const deleteFilePath = args.path as string | undefined || '';
+    case "delete_file":
+      const deleteFilePath = (args.path as string | undefined) || "";
       return `🗑️ Deleting ${deleteFilePath}\n`;
+    case "run_command":
+      const cmd = (args.command as string | undefined) || "";
+      const cmdArgs = (args.args as string[] | undefined) || [];
+      return `💻 Running: ${cmd} ${cmdArgs.join(" ")}\n`;
     default:
       return `🔄 Running ${toolName}\n`;
   }
 }
 
-function getToolResultMessage(toolName: string, result: Record<string, unknown>): string {
+function getToolResultMessage(
+  toolName: string,
+  result: Record<string, unknown>
+): string {
   switch (toolName) {
-    case 'list_files':
+    case "list_files":
       const files = result.files as unknown[] | undefined;
       const fileCount = files?.length || 0;
       return `Found ${fileCount} items\n`;
-    case 'read_file':
-      const lines = result.lines as number | undefined || 0;
-      const path = result.path as string | undefined || '';
+    case "read_file":
+      const lines = (result.lines as number | undefined) || 0;
+      const path = (result.path as string | undefined) || "";
       return `Read ${lines} lines from ${path}\n`;
-    case 'write_file':
+    case "write_file":
       const success = result.success as boolean | undefined;
-      const writeResultPath = result.path as string | undefined || '';
-      return success ? `✓ Written ${writeResultPath}\n` : `❌ Failed to write ${writeResultPath}\n`;
-    case 'grep_files':
+      const writeResultPath = (result.path as string | undefined) || "";
+      return success
+        ? `✓ Written ${writeResultPath}\n`
+        : `❌ Failed to write ${writeResultPath}\n`;
+    case "grep_files":
       const results = result.results as unknown[] | undefined;
       const matches = results?.length || 0;
-      const pattern = result.pattern as string | undefined || '';
+      const pattern = (result.pattern as string | undefined) || "";
       return `Found ${matches} matches for '${pattern}'\n`;
-    case 'run_linter':
+    case "run_linter":
       const errors = result.errors as unknown[] | undefined;
       const warnings = result.warnings as unknown[] | undefined;
       const errorCount = errors?.length || 0;
       const warningCount = warnings?.length || 0;
       return `Linter found ${errorCount} errors, ${warningCount} warnings\n`;
-    case 'check_status':
+    case "check_status":
       const error = result.error as boolean | string | undefined;
-      return error ? `❌ Status check failed\n` : `✓ WebContainer status checked\n`;
-    case 'replace_lines':
+      return error
+        ? `❌ Status check failed\n`
+        : `✓ WebContainer status checked\n`;
+    case "replace_lines":
       const replaceSuccess = result.success as boolean | undefined;
-      const replacePath = result.path as string | undefined || '';
+      const replacePath = (result.path as string | undefined) || "";
       const originalLength = result.originalLength as number | undefined;
       const newLength = result.newLength as number | undefined;
       if (replaceSuccess) {
-        const lengthChange = originalLength && newLength ? ` (${originalLength} → ${newLength} chars)` : '';
+        const lengthChange =
+          originalLength && newLength
+            ? ` (${originalLength} → ${newLength} chars)`
+            : "";
         return `✓ Replaced text in ${replacePath}${lengthChange}\n`;
       } else {
         return `❌ Failed to replace text in ${replacePath}\n`;
       }
-    case 'delete_file':
+    case "delete_file":
       const deleteSuccess = result.success as boolean | undefined;
-      const deleteResultPath = result.path as string | undefined || '';
-      return deleteSuccess ? `✓ Deleted ${deleteResultPath}\n` : `❌ Failed to delete ${deleteResultPath}\n`;
+      const deleteResultPath = (result.path as string | undefined) || "";
+      return deleteSuccess
+        ? `✓ Deleted ${deleteResultPath}\n`
+        : `❌ Failed to delete ${deleteResultPath}\n`;
+    case "run_command":
+      const commandSuccess = result.success as boolean | undefined;
+      const commandName = (result.command as string | undefined) || "";
+      const exitCode = result.exitCode as number | undefined;
+      if (commandSuccess) {
+        return `✓ Command completed: ${commandName}\n`;
+      } else {
+        return `❌ Command failed: ${commandName} (exit code: ${exitCode})\n`;
+      }
     default:
       return `✓ ${toolName} completed\n`;
   }
 }
 
 // Wrap a tool to emit status messages
-function wrapToolWithStatus(originalTool: unknown, toolName: string, statusEmitter: ToolStatusEmitter) {
-  const tool = originalTool as { execute: (...args: unknown[]) => Promise<Record<string, unknown>> };
+function wrapToolWithStatus(
+  originalTool: unknown,
+  toolName: string,
+  statusEmitter: ToolStatusEmitter
+) {
+  const tool = originalTool as {
+    execute: (...args: unknown[]) => Promise<Record<string, unknown>>;
+  };
   return {
     ...tool,
     execute: async (...args: unknown[]) => {
       // Extract the first argument which should contain the parameters
       const params = args[0] as Record<string, unknown>;
-      
+
       // Emit start status
-      statusEmitter.emit('toolStart', { toolName, args: params });
-      
+      statusEmitter.emit("toolStart", { toolName, args: params });
+
       try {
         const result = await tool.execute(...args);
-        
+
         // Emit completion status
-        statusEmitter.emit('toolComplete', { toolName, result });
-        
+        statusEmitter.emit("toolComplete", { toolName, result });
+
         return result;
       } catch (error) {
         // Emit error status
-        statusEmitter.emit('toolError', { toolName, error: error as Error });
+        statusEmitter.emit("toolError", { toolName, error: error as Error });
         throw error;
       }
-    }
+    },
   };
 }
 
@@ -240,9 +277,14 @@ const readFileTool = tool({
 });
 
 const writeFileTool = tool({
-  description: "Write content to a file. Creates a new file if it doesn't exist, or replaces the entire contents of an existing file. Automatically creates parent directories if needed.",
+  description:
+    "Write content to a file. Creates a new file if it doesn't exist, or replaces the entire contents of an existing file. Automatically creates parent directories if needed.",
   inputSchema: z.object({
-    path: z.string().describe("Path to the file to write (e.g., 'src/components/NewComponent.tsx')"),
+    path: z
+      .string()
+      .describe(
+        "Path to the file to write (e.g., 'src/components/NewComponent.tsx')"
+      ),
     content: z.string().describe("Complete content to write to the file"),
   }),
   execute: async ({ path, content }) => {
@@ -366,7 +408,8 @@ const checkStatusTool = tool({
 });
 
 const deleteFileTool = tool({
-  description: "Delete a file from the project. Use with caution as this cannot be undone.",
+  description:
+    "Delete a file from the project. Use with caution as this cannot be undone.",
   inputSchema: z.object({
     path: z.string().describe("Path to the file to delete"),
   }),
@@ -383,7 +426,8 @@ const deleteFileTool = tool({
       };
     } catch (error) {
       console.error(`[Tool] delete_file error:`, error);
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
       return {
         success: false,
         path,
@@ -395,17 +439,81 @@ const deleteFileTool = tool({
   },
 });
 
+const runCommandTool = tool({
+  description:
+    "Execute a command in the WebContainer environment. Can run any Linux command like npm, git, ls, etc.",
+  inputSchema: z.object({
+    command: z
+      .string()
+      .describe("The command to execute (e.g., 'npm', 'ls', 'git')"),
+    args: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "Command arguments as an array (e.g., ['run', 'dev'] for 'npm run dev')"
+      ),
+  }),
+  execute: async ({ command, args = [] }) => {
+    console.log(`[Tool] run_command called: ${command} ${args.join(" ")}`);
+    try {
+      const result = await callWebContainer("runCommand", { command, args });
+      console.log(`[Tool] run_command result:`, result);
+      const typedResult = result as {
+        success: boolean;
+        exitCode: number;
+        output: string;
+        command: string;
+        message: string;
+      };
+      return {
+        success: typedResult.success,
+        exitCode: typedResult.exitCode,
+        output: typedResult.output,
+        command: typedResult.command,
+        message: typedResult.message,
+        type: "run_command",
+      };
+    } catch (error) {
+      console.error(`[Tool] run_command error:`, error);
+      return {
+        success: false,
+        exitCode: -1,
+        output: "",
+        command: `${command} ${args.join(" ")}`,
+        message: `❌ Failed to execute command: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`,
+        type: "run_command",
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  },
+});
+
 const replaceLinesTool = tool({
-  description: "Replace multi-line text blocks in a file with new content. More efficient than rewriting entire files when making targeted changes.",
+  description:
+    "Replace multi-line text blocks in a file with new content. More efficient than rewriting entire files when making targeted changes.",
   inputSchema: z.object({
     path: z.string().describe("Path to the file to modify"),
-    query: z.string().describe("The exact multi-line text to find and replace (must match exactly including whitespace)"),
-    replacement: z.string().describe("The new text to replace the query text with"),
+    query: z
+      .string()
+      .describe(
+        "The exact multi-line text to find and replace (must match exactly including whitespace)"
+      ),
+    replacement: z
+      .string()
+      .describe("The new text to replace the query text with"),
   }),
   execute: async ({ path, query, replacement }) => {
-    console.log(`[Tool] replace_lines called with path: ${path}, query length: ${query.length}, replacement length: ${replacement.length}`);
+    console.log(
+      `[Tool] replace_lines called with path: ${path}, query length: ${query.length}, replacement length: ${replacement.length}`
+    );
     try {
-      const result = await callWebContainer("replaceLines", { path, query, replacement });
+      const result = await callWebContainer("replaceLines", {
+        path,
+        query,
+        replacement,
+      });
       console.log(`[Tool] replace_lines result:`, result);
       const typedResult = result as {
         success: boolean;
@@ -424,7 +532,8 @@ const replaceLinesTool = tool({
       };
     } catch (error) {
       console.error(`[Tool] replace_lines error:`, error);
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
       return {
         success: false,
         path,
@@ -451,39 +560,40 @@ export async function POST(req: Request) {
     );
 
     // Create a stream controller that can be used to send messages immediately
-    let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+    let streamController: ReadableStreamDefaultController<Uint8Array> | null =
+      null;
 
     // Create status emitter that writes directly to stream
     const statusEmitter = new ToolStatusEmitter();
 
     // Listen for tool events and write status messages immediately to stream
-    statusEmitter.on('toolStart', (data: unknown) => {
+    statusEmitter.on("toolStart", (data: unknown) => {
       const { toolName, args } = data as ToolStartEvent;
       const message = getToolStartMessage(toolName, args);
       console.log(`[Tool Status] ${toolName} starting:`, args);
-      
+
       // Write immediately to stream if controller is available
       if (streamController) {
         streamController.enqueue(new TextEncoder().encode(message));
       }
     });
 
-    statusEmitter.on('toolComplete', (data: unknown) => {
+    statusEmitter.on("toolComplete", (data: unknown) => {
       const { toolName, result } = data as ToolCompleteEvent;
       const message = getToolResultMessage(toolName, result);
       console.log(`[Tool Status] ${toolName} completed:`, result);
-      
+
       // Write immediately to stream if controller is available
       if (streamController) {
         streamController.enqueue(new TextEncoder().encode(message));
       }
     });
 
-    statusEmitter.on('toolError', (data: unknown) => {
+    statusEmitter.on("toolError", (data: unknown) => {
       const { toolName, error } = data as ToolErrorEvent;
       const message = `❌ ${toolName} failed: ${error.message}\n`;
       console.log(`[Tool Status] ${toolName} error:`, error);
-      
+
       // Write immediately to stream if controller is available
       if (streamController) {
         streamController.enqueue(new TextEncoder().encode(message));
@@ -492,14 +602,47 @@ export async function POST(req: Request) {
 
     // Wrap tools with status emission
     const enhancedTools = {
-      list_files: wrapToolWithStatus(listFilesTool, 'list_files', statusEmitter),
-      read_file: wrapToolWithStatus(readFileTool, 'read_file', statusEmitter),
-      write_file: wrapToolWithStatus(writeFileTool, 'write_file', statusEmitter),
-      delete_file: wrapToolWithStatus(deleteFileTool, 'delete_file', statusEmitter),
-      grep_files: wrapToolWithStatus(grepFilesTool, 'grep_files', statusEmitter),
-      run_linter: wrapToolWithStatus(runLinterTool, 'run_linter', statusEmitter),
-      check_status: wrapToolWithStatus(checkStatusTool, 'check_status', statusEmitter),
-      replace_lines: wrapToolWithStatus(replaceLinesTool, 'replace_lines', statusEmitter),
+      list_files: wrapToolWithStatus(
+        listFilesTool,
+        "list_files",
+        statusEmitter
+      ),
+      read_file: wrapToolWithStatus(readFileTool, "read_file", statusEmitter),
+      write_file: wrapToolWithStatus(
+        writeFileTool,
+        "write_file",
+        statusEmitter
+      ),
+      delete_file: wrapToolWithStatus(
+        deleteFileTool,
+        "delete_file",
+        statusEmitter
+      ),
+      run_command: wrapToolWithStatus(
+        runCommandTool,
+        "run_command",
+        statusEmitter
+      ),
+      grep_files: wrapToolWithStatus(
+        grepFilesTool,
+        "grep_files",
+        statusEmitter
+      ),
+      run_linter: wrapToolWithStatus(
+        runLinterTool,
+        "run_linter",
+        statusEmitter
+      ),
+      check_status: wrapToolWithStatus(
+        checkStatusTool,
+        "check_status",
+        statusEmitter
+      ),
+      replace_lines: wrapToolWithStatus(
+        replaceLinesTool,
+        "replace_lines",
+        statusEmitter
+      ),
     };
 
     // Create custom stream that provides immediate status updates
@@ -527,15 +670,24 @@ You can help users with their code by:
 3. Writing complete file contents using write_file (creates new files or replaces entire file contents)
 4. Deleting files using delete_file (use with caution - cannot be undone)
 5. Making targeted changes using replace_lines (more efficient for specific text replacements)
-6. Searching for patterns using grep_files
-7. Running linting to check code quality using run_linter
-8. Checking WebContainer status and debugging with check_status
+6. Running any Linux command using run_command (npm, git, ls, ps, kill, etc.)
+7. Searching for patterns using grep_files
+8. Running linting to check code quality using run_linter
+9. Checking WebContainer status and debugging with check_status
 
 When working with files:
 - Use write_file to create new files or completely replace the contents of existing files
 - Use replace_lines for targeted changes when you need to replace specific multi-line blocks within existing files
 - replace_lines is more efficient and safer for making precise changes to existing code
 - write_file will overwrite the entire file, so use it when you need to rewrite substantial portions or create new files
+
+When working with commands:
+- Use run_command to execute any Linux command in the WebContainer environment
+- Examples: run_command("npm", ["install", "package-name"]), run_command("ls", ["-la"]), run_command("git", ["status"])
+- To restart dev server: run_command("pkill", ["-f", "npm"]) then run_command("npm", ["run", "dev"])
+- To install packages: run_command("npm", ["install", "package-name"])
+- To run tests: run_command("npm", ["test"])
+- The command will return exit code, output, and success status
 
 Never ask users for basic project information - always explore the codebase first to understand the context, then provide informed assistance.
 
@@ -552,10 +704,15 @@ Always be thorough and methodical in your approach. Break down complex requests 
           for await (const chunk of result.textStream) {
             controller.enqueue(new TextEncoder().encode(chunk));
           }
-
         } catch (error) {
           console.error("Stream error:", error);
-          controller.enqueue(new TextEncoder().encode(`Error: ${error instanceof Error ? error.message : 'Unknown error'}\n`));
+          controller.enqueue(
+            new TextEncoder().encode(
+              `Error: ${
+                error instanceof Error ? error.message : "Unknown error"
+              }\n`
+            )
+          );
         } finally {
           controller.close();
           streamController = null;
@@ -563,13 +720,15 @@ Always be thorough and methodical in your approach. Break down complex requests 
       },
     });
 
-    console.log(`[Chat API] StreamText setup complete, returning enhanced response`);
+    console.log(
+      `[Chat API] StreamText setup complete, returning enhanced response`
+    );
 
     return new Response(customStream, {
       headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
       },
     });
   } catch (error) {

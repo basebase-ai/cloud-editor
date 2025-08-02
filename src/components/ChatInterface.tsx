@@ -117,9 +117,8 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
                 : msg
             ));
             
-            // Scroll after each chunk to ensure we stay at bottom during streaming
-            // The useEffect will handle this automatically, but we can force immediate scroll for better UX
-            scrollToBottom(true);
+            // Aggressive scroll after each chunk to ensure we stay at bottom during streaming
+            scrollToBottom(true, 5);
           }
         }
       }
@@ -134,30 +133,47 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
   };
 
   // Auto-scroll function with improved reliability
-  const scrollToBottom = (force = false) => {
+  const scrollToBottom = (force = false, delay = 0) => {
     if (scrollAreaRef.current) {
       const viewport = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement;
       if (viewport) {
-        // Use requestAnimationFrame for better timing
-        requestAnimationFrame(() => {
-          viewport.scrollTo({
-            top: viewport.scrollHeight,
-            behavior: force ? 'auto' : 'smooth'
+        const performScroll = () => {
+          // Double requestAnimationFrame for more reliable timing with dynamic content
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              viewport.scrollTo({
+                top: viewport.scrollHeight,
+                behavior: force ? 'auto' : 'smooth'
+              });
+            });
           });
-        });
+        };
+
+        if (delay > 0) {
+          setTimeout(performScroll, delay);
+        } else {
+          performScroll();
+        }
       }
     }
   };
 
-  // Auto-scroll when messages change or during streaming
+  // Auto-scroll when messages change
   useEffect(() => {
-    const lastMessage = messages[messages.length - 1];
-    
-    // Always scroll on new messages
     if (messages.length > 0) {
-      // Use immediate scroll for streaming assistant messages
-      const isStreaming = lastMessage?.role === 'assistant' && isLoading;
-      scrollToBottom(isStreaming);
+      // Use immediate scroll for all messages, with a small delay to ensure content is rendered
+      scrollToBottom(true, 10);
+    }
+  }, [messages]);
+
+  // Additional scroll for streaming content
+  useEffect(() => {
+    if (isLoading && messages.length > 0) {
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage?.role === 'assistant') {
+        // Scroll during streaming with immediate behavior
+        scrollToBottom(true);
+      }
     }
   }, [messages, isLoading]);
 

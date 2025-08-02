@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Modal,
   Stack,
@@ -36,17 +36,7 @@ export default function CommitModal({ opened, onClose, githubToken, repoUrl }: C
   const [error, setError] = useState<string>('');
   const [success, setSuccess] = useState<boolean>(false);
 
-  // Load git status when modal opens
-  useEffect(() => {
-    if (opened) {
-      loadGitStatus();
-      setCommitMessage('');
-      setError('');
-      setSuccess(false);
-    }
-  }, [opened]);
-
-  const loadGitStatus = async () => {
+  const loadGitStatus = useCallback(async () => {
     setIsLoadingStatus(true);
     setError('');
     
@@ -74,7 +64,17 @@ export default function CommitModal({ opened, onClose, githubToken, repoUrl }: C
     } finally {
       setIsLoadingStatus(false);
     }
-  };
+  }, [githubToken, repoUrl]);
+
+  // Load git status when modal opens
+  useEffect(() => {
+    if (opened) {
+      loadGitStatus();
+      setCommitMessage('');
+      setError('');
+      setSuccess(false);
+    }
+  }, [opened, loadGitStatus]);
 
   const handleCommit = async () => {
     if (!commitMessage.trim()) return;
@@ -167,7 +167,7 @@ export default function CommitModal({ opened, onClose, githubToken, repoUrl }: C
           ) : changedFiles.length === 0 ? (
             <Text size="sm" c="dimmed">No changes to commit</Text>
           ) : (
-            <ScrollArea.Autosize maxHeight={200}>
+            <ScrollArea h={200}>
               <Stack gap="xs">
                 {changedFiles.map((file, index) => (
                   <Group key={index} gap="xs" justify="space-between">
@@ -180,7 +180,7 @@ export default function CommitModal({ opened, onClose, githubToken, repoUrl }: C
                   </Group>
                 ))}
               </Stack>
-            </ScrollArea.Autosize>
+            </ScrollArea>
           )}
         </Box>
 

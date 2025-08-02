@@ -132,9 +132,8 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
             const deletePath = params.path as string;
             console.log(`[WebContainer] Deleting file: ${deletePath}`);
             try {
-              // Check if file exists first
-              await webcontainerRef.current.fs.access(deletePath);
-              await webcontainerRef.current.fs.unlink(deletePath);
+              // Delete the file directly (WebContainer fs doesn't have access/unlink)
+              await webcontainerRef.current.fs.rm(deletePath);
               console.log(`[WebContainer] Successfully deleted ${deletePath}`);
               result = { success: true, path: deletePath };
             } catch (deleteError) {
@@ -228,6 +227,68 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
             }
             break;
 
+          case 'runCommand':
+            const command = params.command as string;
+            const args = (params.args as string[]) || [];
+            console.log(`[WebContainer] Running command: ${command} ${args.join(' ')}`);
+            try {
+              const process = await webcontainerRef.current.spawn(command, args);
+              
+              // Collect output
+              let output = '';
+              
+              // Stream stdout
+              const outputReader = process.output.getReader();
+              const decoder = new TextDecoder();
+              
+              // Read output until process completes
+              const readOutput = async () => {
+                try {
+                  while (true) {
+                    const { done, value } = await outputReader.read();
+                    if (done) break;
+                    if (value && typeof value === 'object') {
+                      const chunk = decoder.decode(value as Uint8Array);
+                      output += chunk;
+                      console.log(`[WebContainer Command Output]: ${chunk}`);
+                    }
+                  }
+                } catch (err) {
+                  console.error('[WebContainer] Error reading output:', err);
+                }
+              };
+              
+              // Start reading output
+              const outputPromise = readOutput();
+              
+              // Wait for process to complete
+              const exitCode = await process.exit;
+              
+              // Wait for all output to be read
+              await outputPromise;
+              
+              console.log(`[WebContainer] Command completed with exit code: ${exitCode}`);
+              
+              result = {
+                success: exitCode === 0,
+                exitCode,
+                output: output.trim(),
+                command: `${command} ${args.join(' ')}`,
+                message: exitCode === 0 ? 'Command executed successfully' : `Command failed with exit code ${exitCode}`
+              };
+            } catch (commandError) {
+              console.error(`[WebContainer] Failed to run command ${command}:`, commandError);
+              result = {
+                success: false,
+                exitCode: -1,
+                output: '',
+                error: commandError instanceof Error ? commandError.message : 'Unknown error',
+                command: `${command} ${args.join(' ')}`,
+                message: `Failed to execute command: ${commandError instanceof Error ? commandError.message : 'Unknown error'}`
+              };
+            }
+            break;
+
           default:
             throw new Error(`Unknown action: ${action}`);
         }
@@ -318,7 +379,13 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
 
     // Start polling when WebContainer is ready
     if (webcontainerRef.current && !isLoading) {
+      console.log('[WebContainer] Starting polling for tool requests');
       pollInterval = setInterval(pollForRequests, 1000); // Poll every second
+    } else {
+      console.log('[WebContainer] Polling condition not met:', { 
+        hasWebContainer: !!webcontainerRef.current, 
+        isLoading 
+      });
     }
 
     return () => {
@@ -327,6 +394,123 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
       }
     };
   }, [isLoading, url]);
+
+  // Start polling as soon as WebContainer is available
+  useEffect(() => {
+    let pollInterval: NodeJS.Timeout | undefined;
+
+    if (webcontainerRef.current) {
+      console.log('[WebContainer] WebContainer available, starting polling immediately');
+      pollInterval = setInterval(async () => {
+        if (!webcontainerRef.current) return;
+
+        try {
+          const response = await fetch('/api/webcontainer');
+          if (response.ok) {
+            const data = await response.json();
+            
+            if (data.requests && data.requests.length > 0) {
+              console.log(`[WebContainer] Processing ${data.requests.length} pending requests`);
+              for (const request of data.requests) {
+                // Process each request directly
+                if (!webcontainerRef.current) {
+                  await fetch('/api/webcontainer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ responseId: request.id, result: null, error: 'WebContainer not available' })
+                  });
+                  continue;
+                }
+
+                try {
+                  let result;
+                  const { action, params } = request;
+
+                  switch (action) {
+                    case 'runCommand':
+                      const command = params.command as string;
+                      const args = (params.args as string[]) || [];
+                      console.log(`[WebContainer] Running command: ${command} ${args.join(' ')}`);
+                      try {
+                        const process = await webcontainerRef.current.spawn(command, args);
+                        let output = '';
+                        const outputReader = process.output.getReader();
+                        const decoder = new TextDecoder();
+                        
+                        const readOutput = async () => {
+                          try {
+                            while (true) {
+                              const { done, value } = await outputReader.read();
+                              if (done) break;
+                              if (value && typeof value === 'object') {
+                                const chunk = decoder.decode(value as Uint8Array);
+                                output += chunk;
+                                console.log(`[WebContainer Command Output]: ${chunk}`);
+                              }
+                            }
+                          } catch (err) {
+                            console.error('[WebContainer] Error reading output:', err);
+                          }
+                        };
+                        
+                        const outputPromise = readOutput();
+                        const exitCode = await process.exit;
+                        await outputPromise;
+                        
+                        console.log(`[WebContainer] Command completed with exit code: ${exitCode}`);
+                        
+                        result = {
+                          success: exitCode === 0,
+                          exitCode,
+                          output: output.trim(),
+                          command: `${command} ${args.join(' ')}`,
+                          message: exitCode === 0 ? 'Command executed successfully' : `Command failed with exit code ${exitCode}`
+                        };
+                      } catch (commandError) {
+                        console.error(`[WebContainer] Failed to run command ${command}:`, commandError);
+                        result = {
+                          success: false,
+                          exitCode: -1,
+                          output: '',
+                          error: commandError instanceof Error ? commandError.message : 'Unknown error',
+                          command: `${command} ${args.join(' ')}`,
+                          message: `Failed to execute command: ${commandError instanceof Error ? commandError.message : 'Unknown error'}`
+                        };
+                      }
+                      break;
+                    default:
+                      result = { error: `Unknown action: ${action}` };
+                  }
+
+                  await fetch('/api/webcontainer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ responseId: request.id, result, error: null })
+                  });
+                } catch (error) {
+                  console.error(`WebContainer ${request.action} failed:`, error);
+                  await fetch('/api/webcontainer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ responseId: request.id, result: null, error: error instanceof Error ? error.message : 'Unknown error' })
+                  });
+                }
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Failed to poll for WebContainer requests:', error);
+        }
+      }, 1000); // Poll every second
+    }
+
+    return () => {
+      if (pollInterval) {
+        console.log('[WebContainer] Stopping immediate polling');
+        clearInterval(pollInterval);
+      }
+    };
+  }, []);
 
   // Monitor repoUrl changes to trigger re-initialization if needed
   useEffect(() => {
