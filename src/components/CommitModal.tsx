@@ -33,9 +33,10 @@ interface CommitModalProps {
   onClose: () => void;
   githubToken: string;
   repoUrl: string;
+  onCommitSuccess?: () => void;
 }
 
-export default function CommitModal({ opened, onClose, githubToken, repoUrl }: CommitModalProps) {
+export default function CommitModal({ opened, onClose, githubToken, repoUrl, onCommitSuccess }: CommitModalProps) {
   const [commitMessage, setCommitMessage] = useState<string>('');
   const [trackedFiles, setTrackedFiles] = useState<TrackedFile[]>([]);
   const [isCommitting, setIsCommitting] = useState<boolean>(false);
@@ -176,6 +177,7 @@ export default function CommitModal({ opened, onClose, githubToken, repoUrl }: C
       }
 
       setSuccess(true);
+      onCommitSuccess?.();
       setTimeout(() => {
         onClose();
       }, 1500);

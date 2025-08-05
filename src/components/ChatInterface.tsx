@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 'react';
 import { 
   Stack, 
   ScrollArea, 
@@ -27,12 +27,31 @@ interface ChatInterfaceProps {
   githubToken: string;
 }
 
-export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfaceProps) {
+export interface ChatInterfaceRef {
+  addMessage: (content: string, role: 'user' | 'assistant') => void;
+}
+
+const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(({ onCodeChange, repoUrl }, ref) => {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const [input, setInput] = useState<string>('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    addMessage: (content: string, role: 'user' | 'assistant') => {
+      const newMessage: Message = {
+        id: Date.now().toString(),
+        role,
+        content,
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, newMessage]);
+      
+      // Scroll to bottom after adding message
+      setTimeout(() => scrollToBottom(true), 100);
+    }
+  }));
 
   const stop = () => {
     if (abortController) {
@@ -420,7 +439,15 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
                 </Box>
               </Paper>
             ) : (
-              <Box key={message.id} py="xs" px="sm" style={{ maxWidth: '100%' }}>
+              <Box 
+                key={message.id} 
+                py="xs" 
+                px="sm" 
+                className="assistant-message"
+                style={{ 
+                  maxWidth: '100%'
+                }}
+              >
                 <Box style={{ maxWidth: '100%', overflow: 'hidden' }}>
                   {formatMessage(message.content)}
                 </Box>
@@ -481,4 +508,8 @@ export default function ChatInterface({ onCodeChange, repoUrl }: ChatInterfacePr
       </Box>
     </Stack>
   );
-}
+});
+
+ChatInterface.displayName = 'ChatInterface';
+
+export default ChatInterface;

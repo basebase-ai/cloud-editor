@@ -13,9 +13,10 @@ interface WebContainerManagerProps {
   repoUrl: string;
   githubToken: string;
   basebaseToken: string;
+  onDevServerReady?: () => void;
 }
 
-export default function WebContainerManager({ repoUrl, githubToken, basebaseToken }: WebContainerManagerProps) {
+export default function WebContainerManager({ repoUrl, githubToken, basebaseToken, onDevServerReady }: WebContainerManagerProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const webcontainerRef = useRef<WebContainer | null>(null);
   const isBootingRef = useRef<boolean>(false);
@@ -939,6 +940,7 @@ export default defineConfig({
       setUrl(url);
       setIsLoading(false);
       setStatus('Development server ready');
+      onDevServerReady?.();
     });
 
     // Log all dev server output

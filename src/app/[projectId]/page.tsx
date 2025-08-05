@@ -2,17 +2,20 @@
 
 import { AppShell, Button, Text, Group, ActionIcon, Tooltip } from '@mantine/core';
 import { IconRefresh } from '@tabler/icons-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import WebContainerManager from '@/components/WebContainerManager';
-import ChatInterface from '@/components/ChatInterface';
+import ChatInterface, { ChatInterfaceRef } from '@/components/ChatInterface';
 import GitHubTokenModal from '@/components/GitHubTokenModal';
 import CommitModal from '@/components/CommitModal';
 import FileStatusIndicator from '@/components/FileStatusIndicator';
+import { useFileTracking } from '@/hooks/useFileTracking';
 
 export default function ProjectPage() {
   const params = useParams();
   const projectId = params.projectId as string;
+  const chatRef = useRef<ChatInterfaceRef>(null);
+  const { resetTracking } = useFileTracking();
   const [hasChanges, setHasChanges] = useState<boolean>(false);
   const [repoUrl, setRepoUrl] = useState<string>('');
   const [githubToken, setGithubToken] = useState<string>('');
@@ -101,6 +104,19 @@ export default function ProjectPage() {
     setShowTokenModal(false);
   };
 
+  const handleDevServerReady = () => {
+    console.log('Dev server is ready, adding welcome message to chat');
+    chatRef.current?.addMessage('Hello. How can I help you to improve this app?', 'assistant');
+  };
+
+  const handleCommitSuccess = () => {
+    console.log('Commit successful, resetting file change tracking');
+    // Reset the file tracking cache
+    resetTracking();
+    // Reset the hasChanges state to hide the Publish button
+    setHasChanges(false);
+  };
+
   const handleRefresh = () => {
     // Add a message to the chat asking the AI to restart the dev server
     // This way the user can see what's happening and the AI can handle it properly
@@ -149,6 +165,7 @@ export default function ProjectPage() {
 
       <AppShell.Aside p={0}>
         <ChatInterface 
+          ref={chatRef}
           onCodeChange={() => setHasChanges(true)}
           repoUrl={repoUrl}
           githubToken={githubToken}
@@ -161,6 +178,7 @@ export default function ProjectPage() {
             repoUrl={repoUrl}
             githubToken={githubToken}
             basebaseToken={basebaseToken}
+            onDevServerReady={handleDevServerReady}
           />
         )}
       </AppShell.Main>
@@ -176,6 +194,7 @@ export default function ProjectPage() {
         onClose={() => setShowCommitModal(false)}
         githubToken={githubToken}
         repoUrl={repoUrl}
+        onCommitSuccess={handleCommitSuccess}
       />
     </AppShell>
   );
