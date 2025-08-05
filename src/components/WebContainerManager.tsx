@@ -659,6 +659,45 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
     }
   };
 
+  interface FileStructure {
+    [key: string]: {
+      file?: {
+        contents: string | Uint8Array;
+      };
+      directory?: FileStructure;
+    };
+  }
+
+  const rewriteBinaryImageFiles = async (
+    webcontainer: WebContainer,
+    fileStructure: FileStructure,
+    currentPath: string = ''
+  ): Promise<void> => {
+    const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.webp', '.avif'];
+    
+    for (const [name, node] of Object.entries(fileStructure)) {
+      const fullPath = currentPath ? `${currentPath}/${name}` : name;
+      
+      if (node.directory) {
+        // Recursively process directories
+        await rewriteBinaryImageFiles(webcontainer, node.directory, fullPath);
+      } else if (node.file) {
+        // Check if this is a binary image file
+        const content = node.file.contents;
+        const fileExtension = name.toLowerCase().substring(name.lastIndexOf('.'));
+        
+        if (content instanceof Uint8Array && imageExtensions.includes(fileExtension)) {
+          try {
+            console.log(`Rewriting binary image file: ${fullPath}`);
+            await webcontainer.fs.writeFile(fullPath, content);
+          } catch (err) {
+            console.warn(`Failed to rewrite binary file ${fullPath}:`, err);
+          }
+        }
+      }
+    }
+  };
+
   const downloadAndMountFiles = async (
     webcontainer: WebContainer, 
     owner: string, 
@@ -677,15 +716,6 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    interface FileStructure {
-      [key: string]: {
-        file?: {
-          contents: string | Uint8Array;
-        };
-        directory?: FileStructure;
-      };
-    }
-    
     const fileStructure: FileStructure = {};
     
     // Filter only files (not directories) and exclude very large files
@@ -815,6 +845,11 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
     try {
       await webcontainer.mount(fileStructure as unknown as Parameters<typeof webcontainer.mount>[0]);
       console.log('Files mounted successfully');
+      
+      // Binary file rewrite: Fix corruption issue for binary files
+      console.log('Rewriting binary image files to fix corruption...');
+      await rewriteBinaryImageFiles(webcontainer, fileStructure);
+      console.log('Binary image files rewritten successfully');
     } catch (mountErr) {
       console.error('Failed to mount files:', mountErr);
       throw new Error(`Failed to mount repository files: ${mountErr instanceof Error ? mountErr.message : 'Unknown error'}`);
