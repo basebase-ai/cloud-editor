@@ -1,6 +1,6 @@
 'use client';
 
-import { Badge, Tooltip, Group, Text } from '@mantine/core';
+import { Badge, Tooltip, Text } from '@mantine/core';
 import { IconFiles } from '@tabler/icons-react';
 import { useFileTracking } from '@/hooks/useFileTracking';
 

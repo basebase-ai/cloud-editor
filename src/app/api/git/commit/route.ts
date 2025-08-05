@@ -67,7 +67,9 @@ export async function POST(request: Request) {
       );
       console.log(
         `Files to commit (${files.length}):`,
-        files.map((f: any) => `${f.path} (${f.status})`)
+        files.map(
+          (f: { path: string; status: string }) => `${f.path} (${f.status})`
+        )
       );
 
       // Step 1: Get the latest commit SHA

@@ -403,7 +403,7 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
         clearInterval(pollInterval);
       }
     };
-  }, [isLoading, url]);
+  }, [isLoading, url, markFileAsChanged]);
 
   // Start polling as soon as WebContainer is available
   useEffect(() => {
