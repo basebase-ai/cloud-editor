@@ -4,7 +4,7 @@ import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle } f
 import { 
   Stack, 
   ScrollArea, 
-  TextInput, 
+  Textarea, 
   ActionIcon, 
   Paper, 
   Text, 
@@ -33,6 +33,7 @@ export interface ChatInterfaceRef {
 
 const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(({ onCodeChange, repoUrl }, ref) => {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const [input, setInput] = useState<string>('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -47,9 +48,6 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(({ onCode
         timestamp: new Date()
       };
       setMessages(prev => [...prev, newMessage]);
-      
-      // Scroll to bottom after adding message
-      setTimeout(() => scrollToBottom(true), 100);
     }
   }));
 
@@ -61,8 +59,20 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(({ onCode
     }
   };
 
-  const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInputChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(event.target.value);
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      // Create a synthetic form event to trigger submit
+      const form = event.currentTarget.closest('form');
+      if (form) {
+        const syntheticEvent = new Event('submit', { bubbles: true, cancelable: true });
+        form.dispatchEvent(syntheticEvent);
+      }
+    }
   };
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -135,9 +145,6 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(({ onCode
                 ? { ...msg, content: msg.content + chunk }
                 : msg
             ));
-            
-            // Aggressive scroll after each chunk to ensure we stay at bottom during streaming
-            scrollToBottom(true, 5);
           }
         }
       }
@@ -151,50 +158,22 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(({ onCode
     }
   };
 
-  // Auto-scroll function with improved reliability
-  const scrollToBottom = (force = false, delay = 0) => {
-    if (scrollAreaRef.current) {
-      const viewport = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement;
-      if (viewport) {
-        const performScroll = () => {
-          // Double requestAnimationFrame for more reliable timing with dynamic content
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              viewport.scrollTo({
-                top: viewport.scrollHeight,
-                behavior: force ? 'auto' : 'smooth'
-              });
-            });
-          });
-        };
-
-        if (delay > 0) {
-          setTimeout(performScroll, delay);
-        } else {
-          performScroll();
-        }
-      }
+  // Simple and reliable scroll to bottom
+  const scrollToBottom = () => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }
   };
 
   // Auto-scroll when messages change
   useEffect(() => {
-    if (messages.length > 0) {
-      // Use immediate scroll for all messages, with a small delay to ensure content is rendered
-      scrollToBottom(true, 10);
-    }
+    // Small delay to ensure content is rendered before scrolling
+    const timer = setTimeout(() => {
+      scrollToBottom();
+    }, 50);
+    
+    return () => clearTimeout(timer);
   }, [messages]);
-
-  // Additional scroll for streaming content
-  useEffect(() => {
-    if (isLoading && messages.length > 0) {
-      const lastMessage = messages[messages.length - 1];
-      if (lastMessage?.role === 'assistant') {
-        // Scroll during streaming with immediate behavior
-        scrollToBottom(true);
-      }
-    }
-  }, [messages, isLoading]);
 
   // Enhanced markdown parsing function
   const parseInlineMarkdown = (text: string): React.ReactNode => {
@@ -465,21 +444,28 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(({ onCode
               </Group>
             </Box>
           )}
+          
+          {/* Invisible element for auto-scroll targeting */}
+          <div ref={messagesEndRef} />
         </Stack>
       </ScrollArea>
 
       {/* Input Area */}
       <Box p="md" style={{ borderTop: '1px solid var(--mantine-color-gray-4)', flexShrink: 0 }}>
         <form onSubmit={handleSubmit}>
-          <Group gap="xs">
-            <TextInput
+          <Group gap="xs" align="flex-end">
+            <Textarea
               flex={1}
               placeholder="Ask me to make changes..."
               value={input}
               onChange={handleInputChange}
+              onKeyDown={handleKeyDown}
               disabled={isLoading}
-              radius="xl"
+              radius="md"
               size="sm"
+              autosize
+              minRows={1}
+              maxRows={10}
             />
             {isLoading ? (
               <ActionIcon

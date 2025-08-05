@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { Box, Loader, Text, Stack, Alert, Button } from '@mantine/core';
 import { IconAlertCircle, IconRefresh } from '@tabler/icons-react';
 import { WebContainer } from '@webcontainer/api';
@@ -16,15 +16,82 @@ interface WebContainerManagerProps {
   onDevServerReady?: () => void;
 }
 
-export default function WebContainerManager({ repoUrl, githubToken, basebaseToken, onDevServerReady }: WebContainerManagerProps) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const webcontainerRef = useRef<WebContainer | null>(null);
-  const isBootingRef = useRef<boolean>(false);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string>('');
-  const [status, setStatus] = useState<string>('Initializing WebContainer...');
-  const [url, setUrl] = useState<string>('');
-  const { setOriginalFile, markFileAsChanged, resetTracking } = useFileTracking();
+export interface WebContainerManagerRef {
+  restartDevServer: () => Promise<void>;
+  getBuildErrors: () => string[];
+}
+
+const WebContainerManager = forwardRef<WebContainerManagerRef, WebContainerManagerProps>(
+  ({ repoUrl, githubToken, basebaseToken, onDevServerReady }, ref) => {
+    const iframeRef = useRef<HTMLIFrameElement>(null);
+    const webcontainerRef = useRef<WebContainer | null>(null);
+    const isBootingRef = useRef<boolean>(false);
+    const [isLoading, setIsLoading] = useState<boolean>(true);
+    const [error, setError] = useState<string>('');
+    const [status, setStatus] = useState<string>('Initializing WebContainer...');
+    const [url, setUrl] = useState<string>('');
+    const [buildErrors, setBuildErrors] = useState<string[]>([]);
+    const { setOriginalFile, markFileAsChanged, resetTracking } = useFileTracking();
+
+    // Expose methods to parent component
+    useImperativeHandle(ref, () => ({
+      restartDevServer: async () => {
+        if (!webcontainerRef.current) {
+          throw new Error('WebContainer not available');
+        }
+
+        console.log('Restarting dev server directly...');
+        
+        try {
+          // Kill existing npm processes
+          console.log('Killing existing npm processes...');
+          try {
+            const killProcess = await webcontainerRef.current.spawn('pkill', ['-f', 'npm']);
+            const killExitCode = await killProcess.exit;
+            
+            if (killExitCode === 0) {
+              console.log('Successfully killed npm processes');
+            } else if (killExitCode === 1) {
+              console.log('No npm processes were running (this is fine)');
+            } else {
+              console.warn('pkill command failed with exit code:', killExitCode);
+            }
+          } catch (killError) {
+            console.warn('pkill command failed:', killError);
+            // Continue anyway - maybe no processes were running
+          }
+
+          // Wait a moment for processes to stop
+          await new Promise(resolve => setTimeout(resolve, 1000));
+
+          // Start the dev server again
+          console.log('Starting dev server...');
+          const devProcess = await webcontainerRef.current.spawn('npm', ['run', 'dev']);
+
+          // Log dev server output
+          devProcess.output.pipeTo(
+            new WritableStream({
+              write(data) {
+                console.log('[Dev Server Restart]:', data);
+              }
+            })
+          );
+
+          // Don't wait for the dev process to exit - it should keep running
+          devProcess.exit.then((exitCode) => {
+            console.log(`[Dev Server Restart] Process exited with code: ${exitCode}`);
+          });
+
+          console.log('Dev server restart initiated successfully');
+        } catch (error) {
+          console.error('Failed to restart dev server:', error);
+          throw error;
+        }
+      },
+      getBuildErrors: () => {
+        return buildErrors;
+      }
+    }));
 
   // WebContainer bridge - poll for requests from server-side tools
   useEffect(() => {
@@ -72,7 +139,15 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
               result = { files, path: pathParam || '.' };
             } catch (listError) {
               console.error(`[WebContainer] Failed to list directory ${pathParam || '.'}:`, listError);
-              throw listError;
+              // Return error result instead of throwing
+              const errorMessage = listError instanceof Error ? listError.message : 'Unknown error';
+              result = {
+                files: [],
+                path: pathParam || '.',
+                error: errorMessage,
+                success: false,
+                message: `❌ Could not list directory ${pathParam || '.'}: ${errorMessage}`
+              };
             }
             break;
 
@@ -85,7 +160,15 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
               result = { content, path: readPath };
             } catch (fileError) {
               console.error(`[WebContainer] Failed to read file ${readPath}:`, fileError);
-              throw fileError;
+              // Return error result instead of throwing to avoid 500 responses
+              const errorMessage = fileError instanceof Error ? fileError.message : 'Unknown error';
+              result = {
+                content: null,
+                path: readPath,
+                error: errorMessage,
+                success: false,
+                message: `❌ Could not read file ${readPath}: ${errorMessage}`
+              };
             }
             break;
 
@@ -124,7 +207,14 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
               }
             } catch (writeError) {
               console.error(`[WebContainer] Failed to write file ${writePath}:`, writeError);
-              throw writeError;
+              // Return error result instead of throwing
+              const errorMessage = writeError instanceof Error ? writeError.message : 'Unknown error';
+              result = {
+                success: false,
+                path: writePath,
+                error: errorMessage,
+                message: `❌ Failed to write file ${writePath}: ${errorMessage}`
+              };
             }
             break;
 
@@ -145,7 +235,14 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
               result = { success: true, path: deletePath };
             } catch (deleteError) {
               console.error(`[WebContainer] Failed to delete file ${deletePath}:`, deleteError);
-              throw deleteError;
+              // Return error result instead of throwing
+              const errorMessage = deleteError instanceof Error ? deleteError.message : 'Unknown error';
+              result = {
+                success: false,
+                path: deletePath,
+                error: errorMessage,
+                message: `❌ Failed to delete file ${deletePath}: ${errorMessage}`
+              };
             }
             break;
 
@@ -161,7 +258,13 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
               // Check if query text exists in the file
               if (!currentContent.includes(queryText)) {
                 console.error(`[WebContainer] Query text not found in ${replacePath}`);
-                throw new Error(`Query text not found in file: ${replacePath}`);
+                result = {
+                  success: false,
+                  path: replacePath,
+                  error: `Query text not found in file: ${replacePath}`,
+                  message: `❌ Query text not found in ${replacePath}. The file may have been modified or the text doesn't exist.`
+                };
+                break;
               }
               
               // Perform the replacement
@@ -197,7 +300,14 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
               }
             } catch (replaceError) {
               console.error(`[WebContainer] Failed to replace lines in ${replacePath}:`, replaceError);
-              throw replaceError;
+              // Return error result instead of throwing to avoid 500 responses
+              const errorMessage = replaceError instanceof Error ? replaceError.message : 'Unknown error';
+              result = {
+                success: false,
+                path: replacePath,
+                error: errorMessage,
+                message: `❌ Failed to replace lines in ${replacePath}: ${errorMessage}`
+              };
             }
             break;
 
@@ -233,8 +343,25 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
               };
             } catch (statusError) {
               console.error(`[WebContainer] Failed to get status:`, statusError);
-              throw statusError;
+              // Return error result instead of throwing
+              const errorMessage = statusError instanceof Error ? statusError.message : 'Unknown error';
+              result = {
+                error: errorMessage,
+                success: false,
+                message: `❌ Failed to get status: ${errorMessage}`
+              };
             }
+            break;
+
+          case 'getBuildErrors':
+            console.log(`[WebContainer] Getting build errors...`);
+            result = {
+              errors: buildErrors,
+              hasErrors: buildErrors.length > 0,
+              message: buildErrors.length > 0 
+                ? `Found ${buildErrors.length} build error(s)`
+                : 'No build errors found'
+            };
             break;
 
           case 'runCommand':
@@ -978,11 +1105,37 @@ export default defineConfig({
       onDevServerReady?.();
     });
 
-    // Log all dev server output
+    // Log all dev server output and capture build errors
     devProcess.output.pipeTo(
       new WritableStream({
         write(data) {
           console.log('[Dev Server]:', data);
+          
+          // Capture build errors for AI agent
+          const output = data?.toString() || '';
+          if (output.includes('⨯') || 
+              output.includes('Error:') || 
+              output.includes('error:') ||  // TypeScript errors
+              output.includes('Attempted import error:') ||
+              output.includes('Failed to compile') ||
+              output.includes('Module not found') ||
+              output.includes('has no exported member') ||
+              output.includes('Property') && output.includes('does not exist') ||
+              output.includes('Type') && output.includes('is not assignable') ||
+              output.includes('ReferenceError:') ||
+              output.includes('Cannot resolve')) {
+            setBuildErrors(prev => {
+              const newErrors = [...prev, output.trim()];
+              // Keep only last 10 errors to prevent memory bloat
+              return newErrors.slice(-10);
+            });
+          }
+          
+          // Clear errors on successful rebuild
+          if (output.includes('✓ Compiled') || 
+              output.includes('[Fast Refresh] done')) {
+            setBuildErrors([]);
+          }
         }
       })
     );
@@ -1112,4 +1265,8 @@ export default defineConfig({
       )}
     </Box>
   );
-}
+});
+
+WebContainerManager.displayName = 'WebContainerManager';
+
+export default WebContainerManager;

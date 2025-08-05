@@ -4,7 +4,7 @@ import { AppShell, Button, Text, Group, ActionIcon, Tooltip } from '@mantine/cor
 import { IconRefresh } from '@tabler/icons-react';
 import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'next/navigation';
-import WebContainerManager from '@/components/WebContainerManager';
+import WebContainerManager, { WebContainerManagerRef } from '@/components/WebContainerManager';
 import ChatInterface, { ChatInterfaceRef } from '@/components/ChatInterface';
 import GitHubTokenModal from '@/components/GitHubTokenModal';
 import CommitModal from '@/components/CommitModal';
@@ -15,6 +15,7 @@ export default function ProjectPage() {
   const params = useParams();
   const projectId = params.projectId as string;
   const chatRef = useRef<ChatInterfaceRef>(null);
+  const webContainerRef = useRef<WebContainerManagerRef>(null);
   const { resetTracking } = useFileTracking();
   const [hasChanges, setHasChanges] = useState<boolean>(false);
   const [repoUrl, setRepoUrl] = useState<string>('');
@@ -23,7 +24,7 @@ export default function ProjectPage() {
   const [isInitialized, setIsInitialized] = useState<boolean>(false);
   const [showTokenModal, setShowTokenModal] = useState<boolean>(false);
   const [showCommitModal, setShowCommitModal] = useState<boolean>(false);
-  const [isRefreshing] = useState<boolean>(false);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
 
   // Debug logging for state changes
   useEffect(() => {
@@ -117,13 +118,22 @@ export default function ProjectPage() {
     setHasChanges(false);
   };
 
-  const handleRefresh = () => {
-    // Add a message to the chat asking the AI to restart the dev server
-    // This way the user can see what's happening and the AI can handle it properly
+  const handleRefresh = async () => {
+    if (!webContainerRef.current) {
+      console.error('WebContainer not available');
+      return;
+    }
+
+    setIsRefreshing(true);
     
-    // We could auto-add this message to the chat, but it's better to let the user 
-    // ask the AI directly. For now, just show a tooltip suggesting they ask the AI.
-    console.log('Refresh requested - user should ask AI to restart dev server');
+    try {
+      await webContainerRef.current.restartDevServer();
+      console.log('Dev server restart completed');
+    } catch (error) {
+      console.error('Error restarting dev server:', error);
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   return (
@@ -175,6 +185,7 @@ export default function ProjectPage() {
       <AppShell.Main h="calc(100vh - 60px)">
         {isInitialized && (
           <WebContainerManager 
+            ref={webContainerRef}
             repoUrl={repoUrl}
             githubToken={githubToken}
             basebaseToken={basebaseToken}

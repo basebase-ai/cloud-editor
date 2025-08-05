@@ -10,17 +10,28 @@ interface PendingRequest {
   timestamp: number;
 }
 
-// In-memory store for pending requests (in production, use Redis or similar)
+// In-memory stores for requests (in production, use Redis or similar)
 const pendingRequests = new Map<string, PendingRequest>();
+const inFlightRequests = new Map<string, PendingRequest>();
 const REQUEST_TIMEOUT = 30000; // 30 seconds
 
 // Clean up expired requests
 setInterval(() => {
   const now = Date.now();
+
+  // Clean up pending requests
   for (const [id, request] of pendingRequests.entries()) {
     if (now - request.timestamp > REQUEST_TIMEOUT) {
       request.reject(new Error("Request timeout"));
       pendingRequests.delete(id);
+    }
+  }
+
+  // Clean up in-flight requests
+  for (const [id, request] of inFlightRequests.entries()) {
+    if (now - request.timestamp > REQUEST_TIMEOUT) {
+      request.reject(new Error("Request timeout"));
+      inFlightRequests.delete(id);
     }
   }
 }, 5000);
@@ -31,13 +42,13 @@ export async function POST(request: Request) {
 
     // Handle response from client
     if (responseId) {
-      const pendingRequest = pendingRequests.get(responseId);
-      if (pendingRequest) {
-        pendingRequests.delete(responseId);
+      const inFlightRequest = inFlightRequests.get(responseId);
+      if (inFlightRequest) {
+        inFlightRequests.delete(responseId);
         if (error) {
-          pendingRequest.reject(new Error(error));
+          inFlightRequest.reject(new Error(error));
         } else {
-          pendingRequest.resolve(result);
+          inFlightRequest.resolve(result);
         }
       }
       return new Response(JSON.stringify({ success: true }), { status: 200 });
@@ -77,12 +88,18 @@ export async function POST(request: Request) {
 }
 
 export async function GET() {
-  // Return pending requests for client to process
-  const requests = Array.from(pendingRequests.values()).map((req) => ({
-    id: req.id,
-    action: req.action,
-    params: req.params,
-  }));
+  // Move pending requests to in-flight (proper queue semantics)
+  const requests = Array.from(pendingRequests.values()).map((req) => {
+    // Move from pending to in-flight
+    inFlightRequests.set(req.id, req);
+    pendingRequests.delete(req.id);
+
+    return {
+      id: req.id,
+      action: req.action,
+      params: req.params,
+    };
+  });
 
   return new Response(JSON.stringify({ requests }), {
     status: 200,

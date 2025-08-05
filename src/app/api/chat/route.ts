@@ -166,12 +166,38 @@ function wrapToolWithStatus(
       try {
         const result = await tool.execute(...args);
 
-        // Emit completion status
-        statusEmitter.emit("toolComplete", { toolName, result });
+        // Check if the result indicates a failure (many tools return errors in result rather than throwing)
+        const hasError =
+          result.error ||
+          result.success === false ||
+          (result.type && result.error) ||
+          // Also check for specific tool failure patterns
+          (result.message &&
+            typeof result.message === "string" &&
+            result.message.includes("❌")) ||
+          (result.message &&
+            typeof result.message === "string" &&
+            result.message.includes("Failed"));
 
+        if (hasError) {
+          // Create an error object from the result for the status message
+          const errorMessage =
+            (result.error as string) ||
+            (result.message as string) ||
+            "Tool execution failed";
+          const error = new Error(errorMessage);
+
+          // Emit error status so user sees the failure in chat
+          statusEmitter.emit("toolError", { toolName, error });
+        } else {
+          // Emit completion status for successful results
+          statusEmitter.emit("toolComplete", { toolName, result });
+        }
+
+        // Always return the result so the AI agent can process it and explain any errors
         return result;
       } catch (error) {
-        // Emit error status
+        // Emit error status for unexpected errors (actual exceptions)
         statusEmitter.emit("toolError", { toolName, error: error as Error });
         throw error;
       }
@@ -407,6 +433,38 @@ const checkStatusTool = tool({
   },
 });
 
+const checkBuildErrorsTool = tool({
+  description:
+    "Check for current build errors and compilation issues in the development server. Use this after making file changes to see if there are any errors that need to be fixed.",
+  inputSchema: z.object({}),
+  execute: async () => {
+    console.log(`[Tool] check_build_errors called`);
+    try {
+      const result = await callWebContainer("getBuildErrors", {});
+      console.log(`[Tool] check_build_errors result:`, result);
+      const errors = (result.errors as string[]) || [];
+      return {
+        type: "check_build_errors",
+        errors,
+        hasErrors: errors.length > 0,
+        message:
+          errors.length > 0
+            ? `❌ Found ${errors.length} build error(s): ${errors.join(" | ")}`
+            : "✅ No build errors found",
+      };
+    } catch (error) {
+      console.error(`[Tool] check_build_errors error:`, error);
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      return {
+        type: "check_build_errors",
+        error: errorMessage,
+        message: `❌ Could not check build errors: ${errorMessage}`,
+      };
+    }
+  },
+});
+
 const deleteFileTool = tool({
   description:
     "Delete a file from the project. Use with caution as this cannot be undone.",
@@ -492,7 +550,7 @@ const runCommandTool = tool({
 
 const replaceLinesTool = tool({
   description:
-    "Replace multi-line text blocks in a file with new content. More efficient than rewriting entire files when making targeted changes.",
+    "Replace multi-line text blocks in a file with new content. More efficient than rewriting entire files when making targeted changes. IMPORTANT: If this fails, you should read the file first to understand its current state before trying again.",
   inputSchema: z.object({
     path: z.string().describe("Path to the file to modify"),
     query: z
@@ -537,9 +595,10 @@ const replaceLinesTool = tool({
       return {
         success: false,
         path,
-        message: `❌ Failed to replace lines in ${path}: ${errorMessage}`,
+        message: `❌ Failed to replace lines in ${path}: ${errorMessage}. You should read the file first to see its current content before trying again.`,
         type: "replace_lines",
         error: errorMessage,
+        suggestion: `Use read_file tool to examine ${path} and understand why the query text wasn't found, then try again with the correct text.`,
       };
     }
   },
@@ -638,6 +697,11 @@ export async function POST(req: Request) {
         "check_status",
         statusEmitter
       ),
+      check_build_errors: wrapToolWithStatus(
+        checkBuildErrorsTool,
+        "check_build_errors",
+        statusEmitter
+      ),
       replace_lines: wrapToolWithStatus(
         replaceLinesTool,
         "replace_lines",
@@ -674,6 +738,7 @@ You can help users with their code by:
 7. Searching for patterns using grep_files
 8. Running linting to check code quality using run_linter
 9. Checking WebContainer status and debugging with check_status
+10. Checking for build errors using check_build_errors (IMPORTANT: use this after making file changes)
 
 When working with files:
 - Use write_file to create new files or completely replace the contents of existing files
@@ -691,9 +756,30 @@ When working with commands:
 
 Never ask users for basic project information - always explore the codebase first to understand the context, then provide informed assistance.
 
+IMPORTANT ERROR HANDLING:
+- If any tool call fails (you'll see error messages in the chat), STOP your current approach immediately
+- Explain to the user what went wrong and why the tool failed
+- Before trying the same operation again, read the relevant files to understand the current state
+- Consider alternative approaches if the original method isn't working
+- Don't continue with multi-step plans if an earlier step failed - address the failure first
+
+CRITICAL: After writing or modifying any files, ALWAYS use check_build_errors to verify there are no compilation errors:
+- If you write/modify files and don't check for build errors, you're not completing your task properly
+- Build errors must be fixed before considering a task complete
+- Explain any build errors to the user and fix them immediately
+- Never leave the user with broken code that won't compile
+
+REQUIRED: Always provide a clear summary when you complete work:
+- After making any file changes, summarize what you changed and why
+- If you created new files, explain what they do and how they fit into the project
+- If you fixed issues, explain what was broken and how you fixed it
+- If there were build errors, confirm they are resolved
+- End with a clear statement of what the user can expect to see/do next
+- Never finish without explaining your work to the user
+
 Always be thorough and methodical in your approach. Break down complex requests into smaller steps.
 `,
-            stopWhen: stepCountIs(5),
+            stopWhen: stepCountIs(20),
             experimental_telemetry: {
               isEnabled: true,
               functionId: "webcontainer-tools",

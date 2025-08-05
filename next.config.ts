@@ -18,6 +18,10 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  // Optimize font loading and reduce errors
+  experimental: {
+    optimizePackageImports: ["@mantine/core", "@mantine/hooks"],
+  },
 };
 
 export default nextConfig;
