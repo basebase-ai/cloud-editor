@@ -6,6 +6,7 @@ import '@mantine/notifications/styles.css';
 import { MantineProvider, ColorSchemeScript } from '@mantine/core';
 import { theme } from '../theme';
 import { Notifications } from '@mantine/notifications';
+import { FileTrackingProvider } from '../hooks/useFileTracking';
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -37,8 +38,10 @@ export default function RootLayout({
         suppressHydrationWarning
       >
         <MantineProvider theme={theme} defaultColorScheme="auto">
-          <Notifications />
-          {children}
+          <FileTrackingProvider>
+            <Notifications />
+            {children}
+          </FileTrackingProvider>
         </MantineProvider>
       </body>
     </html>

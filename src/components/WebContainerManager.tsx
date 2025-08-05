@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { Box, Loader, Text, Stack, Alert, Button } from '@mantine/core';
 import { IconAlertCircle, IconRefresh } from '@tabler/icons-react';
 import { WebContainer } from '@webcontainer/api';
+import { useFileTracking } from '@/hooks/useFileTracking';
 
 // Global WebContainer instance to prevent multiple boots
 let globalWebContainer: WebContainer | null = null;
@@ -22,6 +23,7 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
   const [error, setError] = useState<string>('');
   const [status, setStatus] = useState<string>('Initializing WebContainer...');
   const [url, setUrl] = useState<string>('');
+  const { setOriginalFile, markFileAsChanged, resetTracking } = useFileTracking();
 
   // WebContainer bridge - poll for requests from server-side tools
   useEffect(() => {
@@ -106,6 +108,10 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
               
               await webcontainerRef.current.fs.writeFile(writePath, writeContent);
               console.log(`[WebContainer] Successfully wrote ${writePath}`);
+              
+              // Update file tracking
+              markFileAsChanged(writePath, writeContent);
+              
               result = { success: true, path: writePath };
               
               // Verify the file was written by reading it back
@@ -168,6 +174,9 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
                 // Write the updated content back to the file
                 await webcontainerRef.current.fs.writeFile(replacePath, newContent);
                 console.log(`[WebContainer] Successfully replaced lines in ${replacePath}`);
+                
+                // Update file tracking
+                markFileAsChanged(replacePath, newContent);
                 
                 // Verify the file was written by reading it back
                 try {
@@ -587,6 +596,9 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
     console.log('=== Starting repository download process ===');
     console.log('Repository URL:', repoUrl);
     console.log('Token provided:', token ? `Yes (length: ${token.length})` : 'No');
+    
+    // Reset file tracking for new repository
+    resetTracking();
 
     // Extract repo info from URL
     const match = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);
@@ -774,6 +786,11 @@ export default function WebContainerManager({ repoUrl, githubToken, basebaseToke
                   contents: content
                 }
               };
+              
+              // Track original file content for change detection
+              if (typeof content === 'string') {
+                setOriginalFile(file.path, content);
+              }
               
               console.log(`✓ Downloaded: ${file.path}`);
             } else {

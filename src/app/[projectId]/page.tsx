@@ -8,6 +8,7 @@ import WebContainerManager from '@/components/WebContainerManager';
 import ChatInterface from '@/components/ChatInterface';
 import GitHubTokenModal from '@/components/GitHubTokenModal';
 import CommitModal from '@/components/CommitModal';
+import FileStatusIndicator from '@/components/FileStatusIndicator';
 
 export default function ProjectPage() {
   const params = useParams();
@@ -122,6 +123,7 @@ export default function ProjectPage() {
             <Text size="xs" c="dimmed">{projectId}</Text>
           </div>
           <Group gap="xs">
+            <FileStatusIndicator />
             <Tooltip label="Restart dev server">
               <ActionIcon
                 variant="light"
