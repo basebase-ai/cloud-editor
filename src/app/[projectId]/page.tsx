@@ -4,7 +4,8 @@ import { AppShell, Button, Text, Group, ActionIcon, Tooltip } from '@mantine/cor
 import { IconRefresh } from '@tabler/icons-react';
 import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'next/navigation';
-import WebContainerManager, { WebContainerManagerRef } from '@/components/WebContainerManager';
+import { WebContainerManagerRef } from '@/components/WebContainerManager';
+import TabbedWebContainer from '@/components/TabbedWebContainer';
 import ChatInterface, { ChatInterfaceRef } from '@/components/ChatInterface';
 import GitHubTokenModal from '@/components/GitHubTokenModal';
 import CommitModal from '@/components/CommitModal';
@@ -184,8 +185,8 @@ export default function ProjectPage() {
 
       <AppShell.Main h="calc(100vh - 60px)">
         {isInitialized && (
-          <WebContainerManager 
-            ref={webContainerRef}
+          <TabbedWebContainer 
+            webContainerRef={webContainerRef}
             repoUrl={repoUrl}
             githubToken={githubToken}
             basebaseToken={basebaseToken}

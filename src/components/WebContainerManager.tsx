@@ -19,6 +19,7 @@ interface WebContainerManagerProps {
 export interface WebContainerManagerRef {
   restartDevServer: () => Promise<void>;
   getBuildErrors: () => string[];
+  getWebContainer: () => WebContainer | null;
 }
 
 const WebContainerManager = forwardRef<WebContainerManagerRef, WebContainerManagerProps>(
@@ -90,6 +91,9 @@ const WebContainerManager = forwardRef<WebContainerManagerRef, WebContainerManag
       },
       getBuildErrors: () => {
         return buildErrors;
+      },
+      getWebContainer: () => {
+        return webcontainerRef.current;
       }
     }));
 
