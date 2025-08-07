@@ -534,7 +534,7 @@ const WebContainerManager = forwardRef<WebContainerManagerRef, WebContainerManag
         clearInterval(pollInterval);
       }
     };
-  }, [isLoading, url, markFileAsChanged]);
+  }, [isLoading, url, markFileAsChanged, buildErrors]);
 
   // Start polling as soon as WebContainer is available
   useEffect(() => {

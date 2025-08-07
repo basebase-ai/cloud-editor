@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Group,
@@ -34,7 +34,7 @@ export default function CodeEditor({ filePath, webContainerRef }: CodeEditorProp
   const [originalContent, setOriginalContent] = useState('');
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  const loadFile = async (path: string) => {
+  const loadFile = useCallback(async (path: string) => {
     if (!webContainerRef.current) {
       setError('WebContainer not available');
       return;
@@ -65,7 +65,7 @@ export default function CodeEditor({ filePath, webContainerRef }: CodeEditorProp
     } finally {
       setLoading(false);
     }
-  };
+  }, [webContainerRef]);
 
   const saveFile = async () => {
     if (!webContainerRef.current || !filePath) {
@@ -152,7 +152,7 @@ export default function CodeEditor({ filePath, webContainerRef }: CodeEditorProp
       setHasChanges(false);
       setError(null);
     }
-  }, [filePath]);
+  }, [filePath, loadFile, webContainerRef]);
 
   if (!filePath) {
     return (

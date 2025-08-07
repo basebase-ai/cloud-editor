@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Group,
@@ -23,6 +23,7 @@ import {
   IconRefresh
 } from '@tabler/icons-react';
 import { WebContainerManagerRef } from './WebContainerManager';
+import { WebContainer } from '@webcontainer/api';
 
 interface FileNode {
   name: string;
@@ -76,40 +77,7 @@ export default function FileExplorer({ onFileSelect, selectedFile, webContainerR
 
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
 
-  const loadFileTree = async () => {
-    if (!webContainerRef.current) {
-      setError('WebContainer not available');
-      setLoading(false);
-      return;
-    }
-
-    const webcontainer = webContainerRef.current.getWebContainer();
-    if (!webcontainer) {
-      setError('WebContainer not ready');
-      setLoading(false);
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setError(null);
-      
-      console.log('[FileExplorer] Loading file tree...');
-      
-      // Build nested file structure directly from WebContainer
-      const fileNodes = await buildFileStructure(webcontainer, '.');
-      
-      setFileTree(fileNodes);
-      console.log('[FileExplorer] File tree loaded successfully');
-    } catch (err) {
-      console.error('Failed to load file tree:', err);
-      setError(err instanceof Error ? err.message : 'Failed to load files');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const buildFileStructure = async (webcontainer: any, currentPath: string): Promise<FileNode[]> => {
+  const buildFileStructure = useCallback(async (webcontainer: WebContainer, currentPath: string): Promise<FileNode[]> => {
     const nodes: FileNode[] = [];
     
     try {
@@ -155,7 +123,40 @@ export default function FileExplorer({ onFileSelect, selectedFile, webContainerR
       }
       return a.name.localeCompare(b.name);
     });
-  };
+  }, []);
+
+  const loadFileTree = useCallback(async () => {
+    if (!webContainerRef.current) {
+      setError('WebContainer not available');
+      setLoading(false);
+      return;
+    }
+
+    const webcontainer = webContainerRef.current.getWebContainer();
+    if (!webcontainer) {
+      setError('WebContainer not ready');
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+      
+      console.log('[FileExplorer] Loading file tree...');
+      
+      // Build nested file structure directly from WebContainer
+      const fileNodes = await buildFileStructure(webcontainer, '.');
+      
+      setFileTree(fileNodes);
+      console.log('[FileExplorer] File tree loaded successfully');
+    } catch (err) {
+      console.error('Failed to load file tree:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load files');
+    } finally {
+      setLoading(false);
+    }
+  }, [webContainerRef, buildFileStructure]);
 
   const toggleFolder = (path: string) => {
     setExpandedFolders(prev => {
@@ -237,7 +238,7 @@ export default function FileExplorer({ onFileSelect, selectedFile, webContainerR
     };
     
     checkAndLoad();
-  }, [webContainerRef]);
+  }, [webContainerRef, loadFileTree]);
 
   if (loading) {
     return (
