@@ -64,7 +64,19 @@ function getToolStartMessage(
       return `⚡ Checking WebContainer status\n`;
     case "replace_lines":
       const replacePath = (args.path as string | undefined) || "";
-      return `🔧 Replacing text in ${replacePath}\n`;
+      const replaceQuery = (args.query as string | undefined) || "";
+      const queryLength = replaceQuery ? replaceQuery.length : 0;
+      const previewRaw = replaceQuery.slice(0, 120);
+      const preview = previewRaw.replace(/\n/g, "⏎");
+      const hasMore = replaceQuery.length > previewRaw.length;
+      return (
+        `🔧 Replacing text in ${replacePath}\n` +
+        (replacePath ? `- path: ${replacePath}\n` : "") +
+        (queryLength ? `- query length: ${queryLength}\n` : "") +
+        (queryLength
+          ? `- query preview: "${preview}${hasMore ? "…" : ""}"\n`
+          : "")
+      );
     case "delete_file":
       const deleteFilePath = (args.path as string | undefined) || "";
       return `🗑️ Deleting ${deleteFilePath}\n`;
@@ -83,9 +95,13 @@ function getToolResultMessage(
 ): string {
   switch (toolName) {
     case "list_files":
-      const files = result.files as unknown[] | undefined;
+      const files = result.files as (string | unknown)[] | undefined;
       const fileCount = files?.length || 0;
-      return `Found ${fileCount} items\n`;
+      const sample = (files || []).slice(0, 8).join(", ");
+      const more = fileCount > 8 ? ` …and ${fileCount - 8} more` : "";
+      return `Found ${fileCount} items${
+        fileCount ? `: ${sample}${more}` : ""
+      }\n`;
     case "read_file":
       const lines = (result.lines as number | undefined) || 0;
       const path = (result.path as string | undefined) || "";
@@ -97,10 +113,22 @@ function getToolResultMessage(
         ? `✓ Written ${writeResultPath}\n`
         : `❌ Failed to write ${writeResultPath}\n`;
     case "grep_files":
-      const results = result.results as unknown[] | undefined;
+      const results = result.results as
+        | { file: string; line: number; content: string; match: string }[]
+        | undefined;
       const matches = results?.length || 0;
       const pattern = (result.pattern as string | undefined) || "";
-      return `Found ${matches} matches for '${pattern}'\n`;
+      const filesWithMatches = Array.from(
+        new Set((results || []).map((r) => r.file))
+      );
+      const sampleFiles = filesWithMatches.slice(0, 5).join(", ");
+      const moreFiles =
+        filesWithMatches.length > 5
+          ? ` …and ${filesWithMatches.length - 5} more files`
+          : "";
+      return `Found ${matches} matches for '${pattern}'${
+        filesWithMatches.length ? ` in: ${sampleFiles}${moreFiles}` : ""
+      }\n`;
     case "run_linter":
       const errors = result.errors as unknown[] | undefined;
       const warnings = result.warnings as unknown[] | undefined;
@@ -124,7 +152,14 @@ function getToolResultMessage(
             : "";
         return `✓ Replaced text in ${replacePath}${lengthChange}\n`;
       } else {
-        return `❌ Failed to replace text in ${replacePath}\n`;
+        const failureMessage = (result.message as string | undefined) || "";
+        const failureError = (result.error as string | undefined) || "";
+        const suggestion = (result.suggestion as string | undefined) || "";
+        const details = failureMessage || failureError;
+        const suggestionText = suggestion ? `\n💡 ${suggestion}` : "";
+        return `❌ Failed to replace text in ${replacePath}${
+          details ? ": " + details : ""
+        }${suggestionText}\n`;
       }
     case "delete_file":
       const deleteSuccess = result.success as boolean | undefined;
@@ -629,11 +664,36 @@ export async function POST(req: Request) {
 
     // Create status emitter that writes directly to stream
     const statusEmitter = new ToolStatusEmitter();
+    // Debug context captured during a single chat request
+    let lastGrepFiles: string[] = [];
+    let lastListedItems: string[] = [];
 
     // Listen for tool events and write status messages immediately to stream
     statusEmitter.on("toolStart", (data: unknown) => {
       const { toolName, args } = data as ToolStartEvent;
-      const message = getToolStartMessage(toolName, args);
+      let message = getToolStartMessage(toolName, args);
+      // Enrich replace_lines start with recent grep context
+      if (toolName === "replace_lines") {
+        const path = (args.path as string | undefined) || "";
+        if (lastGrepFiles.length > 0) {
+          const sample = lastGrepFiles.slice(0, 5).join(", ");
+          const more =
+            lastGrepFiles.length > 5 ? ` …+${lastGrepFiles.length - 5}` : "";
+          const notInGrep = path && !lastGrepFiles.includes(path);
+          message += `- last grep files: ${sample}${more}\n`;
+          if (notInGrep) {
+            message += `- ⚠️ target not in last grep results\n`;
+          }
+        }
+        if (lastListedItems.length > 0) {
+          const listSample = lastListedItems.slice(0, 8).join(", ");
+          const listMore =
+            lastListedItems.length > 8
+              ? ` …+${lastListedItems.length - 8}`
+              : "";
+          message += `- last list items: ${listSample}${listMore}\n`;
+        }
+      }
       console.log(`[Tool Status] ${toolName} starting:`, args);
 
       // Write immediately to stream if controller is available
@@ -644,6 +704,23 @@ export async function POST(req: Request) {
 
     statusEmitter.on("toolComplete", (data: unknown) => {
       const { toolName, result } = data as ToolCompleteEvent;
+      // Track files from last grep to help debug later decisions
+      if (toolName === "grep_files") {
+        try {
+          const results = (result.results as Array<{ file: string }>) || [];
+          const files = Array.from(new Set(results.map((r) => r.file)));
+          lastGrepFiles = files;
+        } catch {
+          // ignore
+        }
+      } else if (toolName === "list_files") {
+        try {
+          const files = (result.files as string[]) || [];
+          lastListedItems = files;
+        } catch {
+          // ignore
+        }
+      }
       const message = getToolResultMessage(toolName, result);
       console.log(`[Tool Status] ${toolName} completed:`, result);
 
@@ -725,13 +802,20 @@ export async function POST(req: Request) {
             model: google("gemini-1.5-pro"),
             messages,
             tools: enhancedTools,
+            maxToolRoundtrips: 5,
+            toolChoice: "auto",
             system: `You are an AI coding assistant operating within a WebContainer environment. 
 
+CRITICAL: Always wait for tool results before making decisions. Never guess file paths or make assumptions.
+
 IMPORTANT: When a user makes their first request, ALWAYS start by gathering project context:
-1. Use list_files to see the project structure
+1. Use list_files to see the project structure  
 2. Read the README.md if it exists to understand the project
 3. Check package.json to understand the tech stack
-4. Then proceed with the user's request
+4. Use grep_files to search for the text you need to modify
+5. ONLY THEN use replace_lines with the correct path from grep results
+
+NEVER use replace_lines on a file path unless you've confirmed it exists through list_files or grep_files.
 
 You can help users with their code by:
 1. Analyzing their project structure using list_files

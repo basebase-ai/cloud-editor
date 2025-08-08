@@ -304,13 +304,62 @@ const WebContainerManager = forwardRef<WebContainerManagerRef, WebContainerManag
               }
             } catch (replaceError) {
               console.error(`[WebContainer] Failed to replace lines in ${replacePath}:`, replaceError);
-              // Return error result instead of throwing to avoid 500 responses
+              // Enhanced diagnostics when file read/write fails (e.g., ENOENT)
+              let cwd: string | null = null;
+              let rootListing: string[] = [];
+              let nearbyListing: string[] = [];
+              let queryMatches: string[] = [];
+              try {
+                cwd = webcontainerRef.current.workdir;
+                const root = await webcontainerRef.current.fs.readdir('.', { withFileTypes: true });
+                rootListing = root.map((e: { name: string; isDirectory: () => boolean }) => `${e.name}${e.isDirectory() ? '/' : ''}`);
+                const dirParts = replacePath.split('/');
+                const dirPath = dirParts.length > 1 ? dirParts.slice(0, -1).join('/') : '.';
+                const near = await webcontainerRef.current.fs.readdir(dirPath, { withFileTypes: true });
+                nearbyListing = near.map((e: { name: string; isDirectory: () => boolean }) => `${e.name}${e.isDirectory() ? '/' : ''}`);
+              } catch {
+                // ignore diagnostics errors
+              }
+              try {
+                // Try to find where the query actually exists
+                const searchResult = await (async () => {
+                  const results: string[] = [];
+                  const walk = async (dir: string) => {
+                    const entries = await webcontainerRef.current!.fs.readdir(dir, { withFileTypes: true });
+                    for (const entry of entries) {
+                      const full = dir === '.' ? entry.name : `${dir}/${entry.name}`;
+                      if (entry.isDirectory()) {
+                        if (!entry.name.startsWith('.') && entry.name !== 'node_modules') {
+                          await walk(full);
+                        }
+                      } else if (entry.isFile()) {
+                        try {
+                          const content = await webcontainerRef.current!.fs.readFile(full, 'utf-8');
+                          if (content.includes(queryText)) {
+                            results.push(full);
+                          }
+                        } catch {}
+                      }
+                    }
+                  };
+                  await walk('.');
+                  return results;
+                })();
+                queryMatches = searchResult;
+              } catch {}
+              // Return error result including diagnostics
               const errorMessage = replaceError instanceof Error ? replaceError.message : 'Unknown error';
               result = {
                 success: false,
                 path: replacePath,
                 error: errorMessage,
-                message: `❌ Failed to replace lines in ${replacePath}: ${errorMessage}`
+                message: `❌ Failed to replace lines in ${replacePath}: ${errorMessage}`,
+                diagnostics: {
+                  cwd,
+                  rootListing,
+                  nearbyListing,
+                  queryMatches
+                }
               };
             }
             break;
