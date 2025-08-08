@@ -802,7 +802,6 @@ export async function POST(req: Request) {
             model: google("gemini-1.5-pro"),
             messages,
             tools: enhancedTools,
-            maxToolRoundtrips: 5,
             toolChoice: "auto",
             system: `You are an AI coding assistant operating within a WebContainer environment. 
 
