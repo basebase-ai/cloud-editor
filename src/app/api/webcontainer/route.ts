@@ -1,6 +1,9 @@
 // WebContainer bridge API - communicates with client-side WebContainer
 // This stores pending requests that the client will fulfill
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 interface PendingRequest {
   id: string;
   action: string;

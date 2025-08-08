@@ -1,5 +1,6 @@
 import { google } from "@ai-sdk/google";
 import { streamText, tool, stepCountIs } from "ai";
+import { headers } from "next/headers";
 import { z } from "zod";
 
 // Types for tool status events
@@ -211,16 +212,20 @@ async function callWebContainer(
   params: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
   try {
-    const response = await fetch(
-      `${
-        process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
-      }/api/webcontainer`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, params }),
-      }
-    );
+    // Derive the correct origin at runtime to work in both dev and prod
+    const hdrs = await headers();
+    const forwardedProto = hdrs.get("x-forwarded-proto") || "http";
+    const forwardedHost =
+      hdrs.get("x-forwarded-host") || hdrs.get("host") || "localhost:3000";
+    const inferredOrigin = `${forwardedProto}://${forwardedHost}`;
+
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || inferredOrigin;
+
+    const response = await fetch(`${baseUrl}/api/webcontainer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, params }),
+    });
 
     if (!response.ok) {
       throw new Error(`WebContainer call failed: ${response.status}`);
