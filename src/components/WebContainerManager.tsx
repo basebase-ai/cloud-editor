@@ -67,7 +67,18 @@ const WebContainerManager = forwardRef<WebContainerManagerRef, WebContainerManag
 
           // Start the dev server again
           console.log('Starting dev server...');
-          const devProcess = await webcontainerRef.current.spawn('npm', ['run', 'dev']);
+          // Reconstruct the same env vars used on initial start
+          const restartEnv: Record<string, string> = {};
+          if (basebaseToken) {
+            restartEnv.BASEBASE_TOKEN = basebaseToken;
+          }
+          const restartOrigin: string = typeof window !== 'undefined' ? window.location.origin : '';
+          const restartProxyUrl: string = restartOrigin ? `${restartOrigin}/api/proxy` : '/api/proxy';
+          restartEnv.BASEBASE_PROXY_URL = restartProxyUrl;
+          restartEnv.VITE_BASEBASE_PROXY_URL = restartProxyUrl;
+          restartEnv.NEXT_PUBLIC_BASEBASE_PROXY_URL = restartProxyUrl;
+
+          const devProcess = await webcontainerRef.current.spawn('npm', ['run', 'dev'], { env: restartEnv });
 
           // Log dev server output
           devProcess.output.pipeTo(
@@ -1145,6 +1156,17 @@ export default defineConfig({
       env.BASEBASE_TOKEN = basebaseToken;
       console.log('[Dev Server] Setting BASEBASE_TOKEN environment variable');
     }
+    
+    // Provide the Basebase proxy URL for outbound requests
+    const currentOrigin: string = typeof window !== 'undefined' ? window.location.origin : '';
+    const basebaseProxyUrl: string = currentOrigin ? `${currentOrigin}/api/proxy` : '/api/proxy';
+    
+    env.BASEBASE_PROXY_URL = basebaseProxyUrl;
+    
+    // Also set framework-specific public envs so client code can read them
+    env.VITE_BASEBASE_PROXY_URL = basebaseProxyUrl;
+    env.NEXT_PUBLIC_BASEBASE_PROXY_URL = basebaseProxyUrl;
+    console.log('[Dev Server] Set Basebase proxy env URL:', env.BASEBASE_PROXY_URL);
     
     const devProcess = await webcontainer.spawn('npm', ['run', 'dev'], {
       env: env
