@@ -7,8 +7,14 @@ echo "🚀 Universal Dev Container Starting..."
 GITHUB_REPO_URL=${GITHUB_REPO_URL:-""}
 PROJECT_ID=${PROJECT_ID:-"default-project"}
 WORKSPACE_DIR="/workspace"
-CONTAINER_API_PORT=${RAILWAY_CONTAINER_API_PORT:-3001}
-USER_APP_PORT=${PORT:-3000}
+# Railway sets PORT for the public service port, we use that for our proxy
+PUBLIC_PORT=${PORT:-3001} # Railway provides PORT env var for public access  
+USER_APP_PORT=3000 # User app runs internally on port 3000
+
+# But if Railway sets PORT=3000, we need to use a different internal port for user app
+if [ "$PORT" = "3000" ]; then
+    USER_APP_PORT=3001
+fi
 
 # Create workspace directory
 mkdir -p $WORKSPACE_DIR
@@ -17,16 +23,18 @@ cd $WORKSPACE_DIR
 echo "📝 Environment:"
 echo "  - Repo URL: $GITHUB_REPO_URL"
 echo "  - Project ID: $PROJECT_ID"
-echo "  - Container API Port: $CONTAINER_API_PORT"
-echo "  - User App Port: $USER_APP_PORT"
+echo "  - Public Port (Container API + Proxy): $PUBLIC_PORT"
+echo "  - User App Port (Internal): $USER_APP_PORT"
 
-# Function to start container API
+# Function to start container API with proxy
 start_container_api() {
-    echo "🔧 Starting Container API on port $CONTAINER_API_PORT..."
+    echo "🔧 Starting Container API + Proxy on port $PUBLIC_PORT..."
     cd /app
-    node container-api.js &
+    PORT=$PUBLIC_PORT node container-api.js &
     CONTAINER_API_PID=$!
-    echo "✅ Container API started (PID: $CONTAINER_API_PID)"
+    echo "✅ Container API + Proxy started (PID: $CONTAINER_API_PID)"
+    echo "📡 Container API available at: /_container/*"
+    echo "🎯 User app will be proxied from port $USER_APP_PORT"
 }
 
 # Function to clone and start user app
@@ -34,24 +42,30 @@ start_user_app() {
     if [ -n "$GITHUB_REPO_URL" ]; then
         echo "📦 Cloning repository: $GITHUB_REPO_URL"
         
-        # Clone the repository
-        if [ -n "$GITHUB_TOKEN" ]; then
-            # Private repo with token
-            CLONE_URL=$(echo $GITHUB_REPO_URL | sed "s/https:\/\/github.com/https:\/\/$GITHUB_TOKEN@github.com/")
-            git clone $CLONE_URL $WORKSPACE_DIR 2>/dev/null || {
-                echo "❌ Failed to clone private repository"
-                return 1
-            }
+        # Clone the repository (only if workspace is empty)
+        if [ "$(ls -A $WORKSPACE_DIR 2>/dev/null)" ]; then
+            echo "📁 Workspace already exists, skipping clone"
         else
-            # Public repo
-            git clone $GITHUB_REPO_URL $WORKSPACE_DIR || {
-                echo "❌ Failed to clone repository"
-                return 1
-            }
+            if [ -n "$GITHUB_TOKEN" ]; then
+                # Private repo with token
+                CLONE_URL=$(echo $GITHUB_REPO_URL | sed "s/https:\/\/github.com/https:\/\/$GITHUB_TOKEN@github.com/")
+                git clone $CLONE_URL $WORKSPACE_DIR 2>/dev/null || {
+                    echo "❌ Failed to clone private repository"
+                    return 1
+                }
+            else
+                # Public repo
+                git clone $GITHUB_REPO_URL $WORKSPACE_DIR || {
+                    echo "❌ Failed to clone repository"
+                    return 1
+                }
+            fi
         fi
         
         cd $WORKSPACE_DIR
         echo "✅ Repository cloned successfully"
+        echo "📁 Current directory: $(pwd)"
+        echo "📄 Files in directory: $(ls -la | head -10)"
         
         # Auto-detect project type and install dependencies
         if [ -f "package.json" ]; then
@@ -111,9 +125,11 @@ start_container_api
 start_user_app
 
 echo "🎉 Universal Dev Container is ready!"
-echo "   - Container API: http://localhost:$CONTAINER_API_PORT"
+echo "   - Public Access (Container API + Proxy): http://localhost:$PUBLIC_PORT"
+echo "   - Container API: http://localhost:$PUBLIC_PORT/_container/*"
 if [ -n "$USER_APP_PID" ]; then
-    echo "   - User App: http://localhost:$USER_APP_PORT"
+    echo "   - User App (proxied): http://localhost:$PUBLIC_PORT/*"
+    echo "   - User App (direct): http://localhost:$USER_APP_PORT"
 fi
 
 # Keep container running and monitor processes

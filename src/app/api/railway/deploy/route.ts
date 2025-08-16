@@ -150,9 +150,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const environmentVariables: Record<string, string> = {
       GITHUB_REPO_URL: repoUrl,
       NODE_ENV: "development",
-      RAILWAY_CONTAINER_API_PORT: "3001",
       PROJECT_ID: projectId,
-      PORT: "3000", // Ensure the main app runs on port 3000
+      // Don't set PORT - let Railway set it automatically for public access
     };
 
     // Add GitHub token if provided (for private repos)
@@ -252,6 +251,52 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
+    // After successful deployment, create a public domain
+    console.log("=== Creating Public Domain ===");
+
+    const domainMutation = `
+      mutation ServiceDomainCreate($input: ServiceDomainCreateInput!) {
+        serviceDomainCreate(input: $input) {
+          id
+          domain
+          serviceId
+          environmentId
+        }
+      }
+    `;
+
+    const domainRequest = {
+      query: domainMutation,
+      variables: {
+        input: {
+          serviceId,
+          environmentId: railwayEnvironmentId,
+          // Railway will automatically detect the port our app is listening on
+        },
+      },
+    };
+
+    console.log("=== Railway GraphQL Request (Create Domain) ===");
+    console.log("Request Body:", JSON.stringify(domainRequest, null, 2));
+
+    const domainResponse = await fetch(RAILWAY_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${railwayToken}`,
+      },
+      body: JSON.stringify(domainRequest),
+    });
+
+    const domainData = await domainResponse.json();
+    console.log("=== Railway GraphQL Response (Create Domain) ===");
+    console.log("Status:", domainResponse.status);
+    console.log("Response Body:", JSON.stringify(domainData, null, 2));
+
+    const publicUrl = domainData.data?.serviceDomainCreate?.domain
+      ? `https://${domainData.data.serviceDomainCreate.domain}`
+      : null;
+
     // Store deployment info for later use
     // In a production app, you'd store this in a database
     const deploymentInfo = {
@@ -260,6 +305,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       projectId,
       repoUrl,
       status: "deployed",
+      url: publicUrl,
       createdAt: new Date().toISOString(),
     };
 

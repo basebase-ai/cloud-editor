@@ -3,21 +3,28 @@ const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
 const { exec } = require("child_process");
+const { createProxyMiddleware } = require("http-proxy-middleware");
 
 const app = express();
-const PORT = process.env.RAILWAY_CONTAINER_API_PORT || 3001;
+const PORT = process.env.PORT || 3001; // Railway will set PORT to public port
 const WORKSPACE_DIR = "/workspace";
+// If Railway sets PORT=3000, user app needs to use different port to avoid conflict
+const USER_APP_PORT = process.env.PORT === "3000" ? 3001 : 3000;
 
 app.use(cors());
 app.use(express.json());
 
+// ==========================================
+// CONTAINER API ROUTES (/_container/*)
+// ==========================================
+
 // Health check
-app.get("/api/health", (req, res) => {
+app.get("/_container/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
 // Read file
-app.post("/api/read_file", (req, res) => {
+app.post("/_container/read_file", (req, res) => {
   try {
     const { path: filePath } = req.body;
     if (!filePath) {
@@ -33,7 +40,7 @@ app.post("/api/read_file", (req, res) => {
 });
 
 // Write file
-app.post("/api/write_file", (req, res) => {
+app.post("/_container/write_file", (req, res) => {
   try {
     const { path: filePath, content } = req.body;
     if (!filePath || content === undefined) {
@@ -57,7 +64,7 @@ app.post("/api/write_file", (req, res) => {
 });
 
 // List files
-app.post("/api/list_files", (req, res) => {
+app.post("/_container/list_files", (req, res) => {
   try {
     const { path: dirPath = "." } = req.body;
     const fullPath = path.join(WORKSPACE_DIR, dirPath);
@@ -80,7 +87,7 @@ app.post("/api/list_files", (req, res) => {
 });
 
 // Run command
-app.post("/api/run_command", (req, res) => {
+app.post("/_container/run_command", (req, res) => {
   try {
     const { command, cwd = "." } = req.body;
     if (!command) {
@@ -103,7 +110,7 @@ app.post("/api/run_command", (req, res) => {
 });
 
 // Restart server (restart the user's app process)
-app.post("/api/restart_server", (req, res) => {
+app.post("/_container/restart_server", (req, res) => {
   try {
     // Kill existing user app process and restart
     exec('pkill -f "npm.*dev\\|npm.*start"', () => {
@@ -156,7 +163,7 @@ console.error = function (...args) {
 };
 
 // Get recent logs
-app.get("/api/logs", (req, res) => {
+app.get("/_container/logs", (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 50;
     const recentLogs = logBuffer.slice(-limit);
@@ -167,7 +174,7 @@ app.get("/api/logs", (req, res) => {
 });
 
 // Stream logs via Server-Sent Events (combines container logs + user app logs)
-app.get("/api/logs/stream", (req, res) => {
+app.get("/_container/logs/stream", (req, res) => {
   const { spawn } = require("child_process");
 
   // Set up Server-Sent Events
@@ -242,6 +249,41 @@ app.get("/api/logs/stream", (req, res) => {
   });
 });
 
+// ==========================================
+// PROXY TO USER APP (all other routes)
+// ==========================================
+
+// Proxy all non-/_container/* requests to the user's app on port 3000
+const userAppProxy = createProxyMiddleware({
+  target: `http://localhost:${USER_APP_PORT}`,
+  changeOrigin: true,
+  ws: true, // Enable WebSocket proxying for HMR
+  logLevel: "silent", // Reduce noise in logs
+  onError: (err, req, res) => {
+    console.error("Proxy error:", err.message);
+    if (!res.headersSent) {
+      res.status(503).json({
+        error: "User app not available",
+        message:
+          "The application may still be starting up. Please wait a moment and try again.",
+      });
+    }
+  },
+});
+
+// Apply proxy to all routes except /_container/*
+app.use((req, res, next) => {
+  if (req.path.startsWith("/_container/")) {
+    // Let our container API handle it
+    next();
+  } else {
+    // Proxy to user app
+    userAppProxy(req, res, next);
+  }
+});
+
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Container API server running on port ${PORT}`);
+  console.log(`🚀 Container API + Proxy server running on port ${PORT}`);
+  console.log(`📡 Container API available at: /_container/*`);
+  console.log(`🎯 User app proxied from: http://localhost:${USER_APP_PORT}`);
 });
