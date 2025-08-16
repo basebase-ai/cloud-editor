@@ -1,6 +1,6 @@
 # Cloud Editor
 
-A powerful web-based AI coding assistant that allows users to edit GitHub repositories inside a browser. This application allows you to clone any GitHub repository, edit code in real-time, and get AI assistance with development tasks. It leverages cloud containers on Railway to serve the apps in dev mode while they are being edited.
+A powerful web-based AI coding assistant that allows users to edit GitHub repositories inside a browser. This application allows you to clone any GitHub repository, edit code in real-time, and get AI assistance with development tasks. It automatically deploys cloud containers on Railway with a universal Docker image that supports any Node.js, Python, or web project.
 
 ## Features
 
@@ -69,16 +69,18 @@ Navigate to [http://localhost:3000](http://localhost:3000)
 
 To work with a GitHub repository:
 
-1. Navigate to `http://localhost:3000/your-project-name?repo=https://github.com/my-repo-name`
+1. Navigate to `http://localhost:3000/your-project-name?repo=https://github.com/owner/repo`
 2. Add your GitHub token when requested (for private repos)
 3. The system will automatically:
-   - Deploy a new Railway container
-   - Clone your repository
-   - Install dependencies
-   - Start your development server
-   - Show live app output in your browser
-   - Use hot module replacement to instantly show you changes
-   - Stream app server logs to your browser as well
+   - Deploy a new Railway container with universal Docker image
+   - Generate a public Railway domain (e.g., `project-user-production.up.railway.app`)
+   - Clone your repository inside the container
+   - Auto-detect project type (Node.js, Python, etc.)
+   - Install dependencies (`npm install`, `pip install`, etc.)
+   - Start your development server with proper port configuration
+   - Expose your app through path-based proxy routing
+   - Stream real-time logs from both container and your app
+   - Enable hot module replacement for instant changes
 
 ### AI Assistant Capabilities
 
@@ -98,7 +100,17 @@ The AI assistant can help you with:
   - Real-time log streaming
   - Instant feedback on compilation errors
 
-### Example Prompts
+### Example Working Deployment
+
+🌐 **Live Demo**: https://sr2e-starter-production.up.railway.app
+
+This is a live example of a Next.js starter deployed through our system:
+
+- **User App**: https://sr2e-starter-production.up.railway.app/ (Next.js with Mantine UI)
+- **Container API**: https://sr2e-starter-production.up.railway.app/_container/health
+- **Live Logs**: https://sr2e-starter-production.up.railway.app/_container/logs/stream
+
+### Example AI Prompts
 
 - "Show me the project structure and main components"
 - "Add authentication to this Next.js app"
@@ -107,17 +119,27 @@ The AI assistant can help you with:
 - "Optimize this React component for performance"
 - "Set up a database connection and create user models"
 
-## Container API
+## Container API & Proxy Architecture
 
-Each deployed container exposes a unified API for AI agent interactions:
+Each deployed container uses a path-based proxy system:
 
-- `GET /api/health` - Container health check
-- `POST /api/read_file` - Read file contents
-- `POST /api/write_file` - Write/modify files
-- `POST /api/list_files` - List directory contents
-- `POST /api/run_command` - Execute commands
-- `POST /api/restart_server` - Restart the development server
-- `GET /api/logs/stream` - Real-time log streaming via Server-Sent Events
+### User Application Routes
+
+- `https://your-domain.up.railway.app/` - Your application (Next.js, React, etc.)
+- `https://your-domain.up.railway.app/about` - All standard app routes
+- `https://your-domain.up.railway.app/_next/*` - WebSocket HMR, static assets
+
+### Container API Routes (AI Agent Tools)
+
+- `GET /_container/health` - Container health check
+- `POST /_container/read_file` - Read file contents
+- `POST /_container/write_file` - Write/modify files
+- `POST /_container/list_files` - List directory contents
+- `POST /_container/run_command` - Execute commands
+- `POST /_container/restart_server` - Restart the development server
+- `GET /_container/logs/stream` - Real-time log streaming via Server-Sent Events
+
+The proxy ensures zero conflicts between your app and AI agent tools while maintaining full HMR support.
 
 ## Development Scripts
 
@@ -144,22 +166,46 @@ npm run inspect:container  # Interactive container inspector
 
 ## Multi-tenant Architecture
 
-The system supports multiple users working on the same repository:
+The system supports multiple users working on the same repository simultaneously:
 
 - Each user gets a unique user ID stored in localStorage
-- Railway services are named with format: `{userId}-{projectId}`
-- Isolated containers prevent conflicts between users
+- Railway services are named with format: `{userHash}-{projectHash}-production`
+- Each user-project combination gets its own isolated container
+- Automatic Railway domain generation: `project-user-production.up.railway.app`
 - Real-time log streaming is per-user session
+- No conflicts between users editing the same repository
 
-## Supported Project Types
+## Universal Container Support
 
-The universal container automatically detects and supports:
+The universal Docker container automatically detects and supports:
 
-- **Node.js Projects** - package.json with npm/yarn
-- **Next.js Applications** - Automatic dev server startup
-- **React Applications** - Create React App and Vite projects
-- **Python Projects** - requirements.txt with pip
-- **Express Servers** - API and web applications
+### Node.js Ecosystem
+
+- **Next.js Applications** - `npm run dev` with HMR support
+- **React Applications** - Create React App, Vite projects
+- **Express Servers** - API servers and web applications
+- **Vue.js Applications** - Nuxt.js and standard Vue projects
+- **General Node.js** - Any project with `package.json`
+
+### Python Projects
+
+- **Flask Applications** - Web applications and APIs
+- **Django Projects** - Full-stack web applications
+- **FastAPI** - Modern async API frameworks
+- **General Python** - Any project with `requirements.txt`
+
+### Static Sites
+
+- **HTML/CSS/JS** - Served via static file server
+- **Generated Sites** - Gatsby, Hugo output directories
+
+### Auto-Detection Features
+
+- Detects project type from `package.json`, `requirements.txt`
+- Automatically installs dependencies
+- Selects appropriate start command (`npm run dev`, `python app.py`, etc.)
+- Configures ports for Railway deployment
+- Handles both development and production modes
 
 ## Browser Compatibility
 
