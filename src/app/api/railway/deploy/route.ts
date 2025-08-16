@@ -16,14 +16,113 @@ interface ServiceCreateResponse {
       name: string;
     };
   };
+  errors?: Array<{ message: string }>;
 }
 
-interface DeploymentResponse {
-  data: {
-    serviceInstanceDeploy: {
-      id: string;
-      status: string;
-    };
+interface DeploymentStatus {
+  status: "SUCCESS" | "FAILED" | "BUILDING" | "CRASHED";
+  deploymentId?: string;
+  error?: string;
+}
+
+async function waitForDeploymentReady(
+  railwayProjectId: string,
+  serviceId: string,
+  railwayToken: string
+): Promise<DeploymentStatus> {
+  const maxAttempts = 60; // 10 minutes max (10 seconds * 60)
+  let attempts = 0;
+
+  const checkDeploymentQuery = `
+    query Service($id: String!) {
+      service(id: $id) {
+        deployments {
+          edges {
+            node {
+              id
+              status
+              createdAt
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  while (attempts < maxAttempts) {
+    try {
+      console.log(
+        `⏳ Checking deployment status (attempt ${
+          attempts + 1
+        }/${maxAttempts})...`
+      );
+
+      const response = await fetch(RAILWAY_API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${railwayToken}`,
+        },
+        body: JSON.stringify({
+          query: checkDeploymentQuery,
+          variables: { id: serviceId },
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          `Failed to check deployment status: ${response.status}`
+        );
+      }
+
+      const data = await response.json();
+      const deployments = data.data?.service?.deployments?.edges || [];
+
+      if (deployments.length === 0) {
+        console.log("No deployments found yet, waiting...");
+        await new Promise((resolve) => setTimeout(resolve, 10000));
+        attempts++;
+        continue;
+      }
+
+      // Get the latest deployment
+      const latestDeployment = deployments[0].node;
+      console.log(`📊 Latest deployment status: ${latestDeployment.status}`);
+
+      if (latestDeployment.status === "SUCCESS") {
+        console.log("🎉 Deployment marked as SUCCESS!");
+
+        return {
+          status: "SUCCESS",
+          deploymentId: latestDeployment.id,
+        };
+      } else if (
+        latestDeployment.status === "FAILED" ||
+        latestDeployment.status === "CRASHED"
+      ) {
+        return {
+          status: "FAILED",
+          deploymentId: latestDeployment.id,
+          error: `Deployment ${latestDeployment.status.toLowerCase()}`,
+        };
+      }
+
+      // Still building/deploying, wait before next check
+      await new Promise((resolve) => setTimeout(resolve, 10000)); // Wait 10 seconds
+      attempts++;
+    } catch (error) {
+      console.error(`Error checking deployment status:`, error);
+      attempts++;
+      if (attempts < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 10000));
+      }
+    }
+  }
+
+  // Timeout reached
+  return {
+    status: "FAILED",
+    error: "Deployment timeout - took longer than 10 minutes",
   };
 }
 
@@ -60,7 +159,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const [, owner, repo] = repoMatch;
+    const [, , repo] = repoMatch;
 
     // Use just the repo name, not the full projectId which includes owner
     const cleanRepoName = repo.replace(/[^a-zA-Z0-9-]/g, "");
@@ -189,17 +288,44 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           if (redeployResponse.ok) {
             console.log("✅ Existing service redeployed successfully");
 
+            console.log("=== Waiting for Redeploy to Complete ===");
+
+            // Wait for redeployment to be ready (blocking until success or failure)
+            const finalDeploymentStatus = await waitForDeploymentReady(
+              railwayProjectId,
+              serviceId,
+              railwayToken
+            );
+
+            if (finalDeploymentStatus.status === "FAILED") {
+              return NextResponse.json(
+                {
+                  error: `Redeployment failed: ${
+                    finalDeploymentStatus.error || "Unknown error"
+                  }`,
+                },
+                { status: 500 }
+              );
+            }
+
+            const deploymentInfo = {
+              serviceId: serviceId,
+              deploymentId: finalDeploymentStatus.deploymentId || "redeployed",
+              projectId,
+              repoUrl,
+              status: finalDeploymentStatus.status,
+              url: `https://${serviceName}-dev.up.railway.app`,
+              createdAt: new Date().toISOString(),
+            };
+
+            console.log(
+              "✅ Redeployment completed successfully:",
+              deploymentInfo
+            );
+
             return NextResponse.json({
               success: true,
-              deployment: {
-                serviceId: serviceId,
-                deploymentId: "redeployed",
-                projectId,
-                repoUrl,
-                status: "redeployed",
-                url: `https://${serviceName}.up.railway.app`,
-                createdAt: new Date().toISOString(),
-              },
+              deployment: deploymentInfo,
             });
           }
         }
@@ -418,20 +544,41 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const publicUrl = domainData.data?.serviceDomainCreate?.domain
       ? `https://${domainData.data.serviceDomainCreate.domain}`
-      : `https://${serviceName}.up.railway.app`; // Fallback to expected format
+      : `https://${serviceName}-dev.up.railway.app`; // Railway adds -dev suffix automatically
+
+    console.log("=== Waiting for Deployment to Complete ===");
+
+    // Wait for deployment to be ready (blocking until success or failure)
+    const finalDeploymentStatus = await waitForDeploymentReady(
+      railwayProjectId,
+      serviceId,
+      railwayToken
+    );
+
+    if (finalDeploymentStatus.status === "FAILED") {
+      return NextResponse.json(
+        {
+          error: `Deployment failed: ${
+            finalDeploymentStatus.error || "Unknown error"
+          }`,
+        },
+        { status: 500 }
+      );
+    }
 
     // Store deployment info for later use
-    // In a production app, you'd store this in a database
     const deploymentInfo = {
       serviceId,
-      deploymentId: "deployed", // Railway now returns boolean, not deployment ID
+      deploymentId: finalDeploymentStatus.deploymentId || "deployed",
       projectId,
       repoUrl,
-      status: "deployed",
+      status: finalDeploymentStatus.status,
       url: publicUrl,
       domainCreated: !!domainData.data?.serviceDomainCreate,
       createdAt: new Date().toISOString(),
     };
+
+    console.log("✅ Deployment completed successfully:", deploymentInfo);
 
     return NextResponse.json({
       success: true,

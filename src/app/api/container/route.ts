@@ -134,19 +134,43 @@ async function forwardToContainer(request: PendingRequest): Promise<void> {
 
     const containerApiUrl = `${request.containerUrl}${endpoint}`;
 
+    console.log(`[Container API] Forwarding request to: ${containerApiUrl}`);
+    console.log(`[Container API] Request params:`, request.params);
+
     const response = await fetch(containerApiUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(request.params),
+      // Add timeout to prevent hanging
+      signal: AbortSignal.timeout(30000), // 30 second timeout
     });
 
+    console.log(`[Container API] Response status: ${response.status}`);
+
     if (!response.ok) {
-      throw new Error(`Container API responded with ${response.status}`);
+      const errorText = await response.text();
+      console.error(`[Container API] Error response:`, errorText);
+
+      // Handle common container not ready scenarios
+      if (response.status === 503 || response.status === 502) {
+        throw new Error(
+          `Container is still starting up. Please wait a few more seconds.`
+        );
+      } else if (response.status === 404) {
+        throw new Error(
+          `Container API endpoint not found. The container may still be deploying.`
+        );
+      } else {
+        throw new Error(
+          `Container API responded with ${response.status}: ${errorText}`
+        );
+      }
     }
 
     const result = await response.json();
+    console.log(`[Container API] Success response:`, result);
     request.resolve(result);
   } catch (error) {
     console.error("Failed to forward request to container:", error);

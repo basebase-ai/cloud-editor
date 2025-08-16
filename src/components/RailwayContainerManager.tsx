@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
-import { Box, Loader, Text, Stack, Alert, Button, Tabs } from '@mantine/core';
-import { IconAlertCircle, IconRefresh, IconEye, IconTerminal } from '@tabler/icons-react';
+import { Box, Loader, Text, Stack, Alert, Button, Tabs, Group } from '@mantine/core';
+import { IconAlertCircle, IconRefresh, IconEye, IconTerminal, IconFiles } from '@tabler/icons-react';
+import FileExplorer from './FileExplorer';
+import CodeEditor from './CodeEditor';
 import { useFileTracking } from '@/hooks/useFileTracking';
 
 interface RailwayContainerManagerProps {
@@ -38,104 +40,110 @@ interface LogEntry {
 const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayContainerManagerProps>(
   ({ repoUrl, githubToken, userId, onDevServerReady }, ref) => {
     const iframeRef = useRef<HTMLIFrameElement>(null);
+    const selfRef = useRef<RailwayContainerManagerRef | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [error, setError] = useState<string>('');
     const [status, setStatus] = useState<string>('Initializing container...');
     const [deployment, setDeployment] = useState<DeploymentInfo | null>(null);
+    const [isDeploying, setIsDeploying] = useState<boolean>(false); // Lock to prevent double deployment
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [buildErrors, setBuildErrors] = useState<string[]>([]);
     const [activeTab, setActiveTab] = useState<string | null>('preview');
+    const [selectedFile, setSelectedFile] = useState<string | null>(null);
+    const [iframeError, setIframeError] = useState<string | null>(null);
+    const [iframeRetryCount, setIframeRetryCount] = useState(0);
     const { markFileAsChanged } = useFileTracking();
     const eventSourceRef = useRef<EventSource | null>(null);
 
     // Expose methods to parent component
-    useImperativeHandle(ref, () => ({
-      restartDevServer: async () => {
-        if (!deployment?.url) {
-          throw new Error('Container not available');
-        }
-
-        try {
-          setStatus('Restarting development server...');
-          const response = await fetch('/api/container', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'restartServer',
-              params: {},
-              containerUrl: deployment.url,
-            }),
-          });
-
-          if (!response.ok) {
-            throw new Error('Failed to restart server');
+    useImperativeHandle(ref, () => {
+      const methods = {
+        restartDevServer: async () => {
+          if (!deployment?.url) {
+            throw new Error('Container not available');
           }
 
-          setStatus('Development server restarted');
-        } catch (error) {
-          console.error('Failed to restart dev server:', error);
-          throw error;
-        }
-      },
-      getBuildErrors: () => {
-        return buildErrors;
-      },
-      getContainerUrl: () => {
-        return deployment?.url || null;
-      }
-    }));
+          try {
+            setStatus('Restarting development server...');
+            const response = await fetch('/api/container', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'restartServer',
+                params: {},
+                containerUrl: deployment.url,
+              }),
+            });
 
-  const pollDeploymentStatus = useCallback(async (_serviceId: string): Promise<void> => {
-    const maxAttempts = 30; // 5 minutes max
-    let attempts = 0;
-
-    const poll = async (): Promise<void> => {
-      try {
-        const queryParams = new URLSearchParams({ projectId: deployment?.projectId || '' });
-        if (userId) {
-          queryParams.set('userId', userId);
-        }
-        const response = await fetch(`/api/railway/deploy?${queryParams}`);
-
-        if (response.ok) {
-          const data = await response.json();
-          if (data.service?.deployment) {
-            const updatedDeployment = {
-              ...deployment!,
-              status: data.service.deployment.status,
-              url: data.service.deployment.url,
-            };
-            setDeployment(updatedDeployment);
-
-            if (data.service.deployment.status === 'SUCCESS') {
-              setStatus('Container is running');
-              return;
-            } else if (data.service.deployment.status === 'FAILED') {
-              throw new Error('Container deployment failed');
+            if (!response.ok) {
+              throw new Error('Failed to restart server');
             }
+
+            setStatus('Development server restarted');
+          } catch (error) {
+            console.error('Failed to restart dev server:', error);
+            throw error;
           }
+        },
+        getBuildErrors: () => {
+          return buildErrors;
+        },
+        getContainerUrl: () => {
+          return deployment?.url || null;
         }
+      };
+      
+      // Store reference to self for internal use
+      selfRef.current = methods;
+      return methods;
+    });
 
-        attempts++;
-        if (attempts < maxAttempts) {
-          setTimeout(poll, 10000); // Poll every 10 seconds
-        } else {
-          throw new Error('Deployment timeout');
-        }
-      } catch (error) {
-        setError(error instanceof Error ? error.message : 'Deployment polling failed');
-        setIsLoading(false);
+  // Function to retry iframe loading
+  const retryIframe = useCallback(() => {
+    if (deployment?.url && iframeRetryCount < 3) {
+      console.log(`Retrying iframe load (attempt ${iframeRetryCount + 1}/3)...`);
+      setIframeError(null);
+      setIframeRetryCount(prev => prev + 1);
+      
+      // Force iframe reload by changing key
+      if (iframeRef.current) {
+        iframeRef.current.src = deployment.url + `?_retry=${Date.now()}`;
       }
-    };
+    }
+  }, [deployment?.url, iframeRetryCount]);
 
-    poll();
-  }, [deployment]);
+  // Reset retry count when deployment changes
+  useEffect(() => {
+    setIframeRetryCount(0);
+    setIframeError(null);
+  }, [deployment?.url]);
+
+  // Auto-retry after iframe error with delay
+  useEffect(() => {
+    if (iframeError && iframeRetryCount < 3) {
+      const timer = setTimeout(() => {
+        console.log('Auto-retrying iframe after error...');
+        retryIframe();
+      }, 5000); // Wait 5 seconds before auto-retry
+
+      return () => clearTimeout(timer);
+    }
+  }, [iframeError, iframeRetryCount, retryIframe]);
+
+  // No more polling needed - deployment API will block until ready
 
   const deployContainer = useCallback(async (): Promise<void> => {
+    // Prevent double deployment from React StrictMode
+    if (isDeploying) {
+      console.log('[RailwayContainerManager] Deployment already in progress, skipping...');
+      return;
+    }
+
     try {
+      setIsDeploying(true);
       setIsLoading(true);
       setError('');
-      setStatus('Deploying container to Railway...');
+                setStatus('Deploying container to Railway... This may take up to 2 minutes.');
 
       // Extract project ID from repo URL
       const repoMatch = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);
@@ -146,6 +154,9 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
       const [, owner, repo] = repoMatch;
       const projectId = `${owner}-${repo.replace('.git', '')}`;
 
+      console.log(`[RailwayContainerManager] Starting deployment for ${projectId}...`);
+
+      // This call will block until container is ready or fails
       const response = await fetch('/api/railway/deploy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -153,7 +164,7 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
           repoUrl,
           projectId,
           userId,
-          githubToken: githubToken || undefined, // Pass GitHub token for private repos
+          githubToken: githubToken || undefined,
         }),
       });
 
@@ -163,18 +174,20 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
       }
 
       const data = await response.json();
+      console.log(`[RailwayContainerManager] Deployment successful:`, data.deployment);
+      
       setDeployment(data.deployment);
-      setStatus('Container deployed, waiting for startup...');
-
-      // Poll for deployment status
-      await pollDeploymentStatus(data.deployment.serviceId);
+      setStatus('Container is ready!');
+      setIsLoading(false);
 
     } catch (err) {
       console.error('Container deployment failed:', err);
       setError(err instanceof Error ? err.message : 'Failed to deploy container');
       setIsLoading(false);
+    } finally {
+      setIsDeploying(false);
     }
-  }, [repoUrl, githubToken, userId, pollDeploymentStatus]);
+  }, [repoUrl, githubToken, userId, isDeploying]);
 
   const startLogStreaming = useCallback(async (): Promise<void> => {
     if (!deployment) return;
@@ -243,14 +256,15 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
     }
   }, [deployment]);
 
-  // Deploy container when component mounts
+  // Deploy container when component mounts (only once)
   useEffect(() => {
-    if (!repoUrl) {
-      return;
+    if (!repoUrl || deployment || isDeploying) {
+      return; // Don't deploy if already deployed, deploying, or no repo URL
     }
 
+    console.log('[RailwayContainerManager] Starting initial deployment...');
     deployContainer();
-  }, [repoUrl, deployContainer]);
+  }, [repoUrl, deployment, isDeploying, deployContainer]);
 
     // Start log streaming when deployment is ready
     useEffect(() => {
@@ -410,19 +424,8 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
       );
     }
 
-    if (isLoading) {
-      return (
-        <Box h="100%" display="flex" style={{ alignItems: 'center', justifyContent: 'center' }}>
-          <Stack align="center" gap="md">
-            <Loader size="lg" />
-            <Text size="sm" c="dimmed">{status}</Text>
-          </Stack>
-        </Box>
-      );
-    }
-
     return (
-      <Box h="100%">
+      <Box h="100%" style={{ minWidth: '320px' }}>
         <Tabs value={activeTab} onChange={setActiveTab} h="100%">
           <Tabs.List>
             <Tabs.Tab value="preview" leftSection={<IconEye size={16} />}>
@@ -431,28 +434,85 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
             <Tabs.Tab value="logs" leftSection={<IconTerminal size={16} />}>
               Logs {logs.length > 0 && `(${logs.length})`}
             </Tabs.Tab>
+            <Tabs.Tab value="files" leftSection={<IconFiles size={16} />}>
+              Files
+            </Tabs.Tab>
           </Tabs.List>
 
           <Tabs.Panel value="preview" h="calc(100% - 40px)">
             <Box h="100%" w="100%">
-              {deployment?.url ? (
-                <iframe
-                  ref={iframeRef}
-                  src={deployment.url}
-                  style={{
-                    width: '100%',
-                    height: '100%',
-                    border: 'none',
-                    backgroundColor: '#ffffff'
-                  }}
-                  title="Railway Container Preview"
-                />
+              {isLoading ? (
+                <Box h="100%" display="flex" style={{ alignItems: 'center', justifyContent: 'center' }}>
+                  <Stack align="center" gap="md">
+                    <Loader size="lg" />
+                    <Text size="sm" c="dimmed">{status}</Text>
+                  </Stack>
+                </Box>
+              ) : deployment?.url ? (
+                <Box h="100%" w="100%">
+                  <Box p="xs" style={{ borderBottom: '1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4))' }}>
+                    <Text size="xs" c="dimmed">
+                      Container URL: {deployment.url}
+                    </Text>
+                    {iframeError && (
+                      <Group gap="xs" mt="xs">
+                        <Text size="xs" c="red">
+                          {iframeError}
+                        </Text>
+                        {iframeRetryCount < 3 && (
+                          <Button size="xs" variant="light" onClick={retryIframe}>
+                            Retry ({iframeRetryCount + 1}/3)
+                          </Button>
+                        )}
+                      </Group>
+                    )}
+                  </Box>
+                  {iframeError && iframeRetryCount >= 3 ? (
+                    <Box h="calc(100% - 60px)" display="flex" style={{ alignItems: 'center', justifyContent: 'center' }}>
+                      <Stack align="center" gap="md">
+                        <Text size="lg" fw={500} c="red">Connection Failed</Text>
+                        <Text size="sm" c="dimmed" ta="center">
+                          The container is deployed but not responding yet.<br/>
+                          This can take 1-2 minutes for the service to start up.
+                        </Text>
+                        <Button variant="light" onClick={() => {
+                          setIframeRetryCount(0);
+                          setIframeError(null);
+                          retryIframe();
+                        }}>
+                          Try Again
+                        </Button>
+                      </Stack>
+                    </Box>
+                  ) : (
+                    <iframe
+                      ref={iframeRef}
+                      src={deployment.url}
+                      key={`iframe-${deployment.url}-${iframeRetryCount}`}
+                      style={{
+                        width: '100%',
+                        height: 'calc(100% - 60px)',
+                        border: 'none',
+                        backgroundColor: '#ffffff'
+                      }}
+                      title="Railway Container Preview"
+                      onError={() => {
+                        console.error('Iframe failed to load:', deployment.url);
+                        setIframeError('Failed to connect to container. The service may still be starting up.');
+                      }}
+                      onLoad={() => {
+                        console.log('Iframe loaded successfully for:', deployment.url);
+                        setIframeError(null);
+                      }}
+                    />
+                  )}
+                </Box>
               ) : (
                 <Box h="100%" display="flex" style={{ alignItems: 'center', justifyContent: 'center' }}>
                   <Stack align="center" gap="md">
                     <Text size="lg" fw={500}>No Preview Available</Text>
                     <Text size="sm" c="dimmed">
-                      The container is starting...
+                      Deploy a container to see the preview here
                     </Text>
                   </Stack>
                 </Box>
@@ -477,6 +537,35 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
                 ))
               )}
             </Box>
+          </Tabs.Panel>
+
+          <Tabs.Panel value="files" h="calc(100% - 40px)">
+            <Group h="100%" gap={0} align="stretch">
+              {/* File Explorer - Left Side */}
+              <Box 
+                w={300} 
+                h="100%" 
+                style={{ 
+                  minWidth: '200px',
+                  borderRight: '1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4))',
+                  backgroundColor: 'light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-7))'
+                }}
+              >
+                <FileExplorer
+                  onFileSelect={setSelectedFile}
+                  selectedFile={selectedFile}
+                  containerRef={selfRef}
+                />
+              </Box>
+
+              {/* Code Editor - Right Side */}
+              <Box style={{ flex: 1 }} h="100%">
+                <CodeEditor
+                  filePath={selectedFile}
+                  containerRef={selfRef}
+                />
+              </Box>
+            </Group>
           </Tabs.Panel>
         </Tabs>
       </Box>

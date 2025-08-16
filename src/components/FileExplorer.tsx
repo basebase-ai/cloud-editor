@@ -82,6 +82,13 @@ export default function FileExplorer({ onFileSelect, selectedFile, containerRef 
     try {
       console.log(`[FileExplorer] Reading directory: ${currentPath}`);
       
+      // Check if container is available
+      const containerUrl = containerRef.current?.getContainerUrl();
+      if (!containerUrl) {
+        console.warn('[FileExplorer] Container not available yet');
+        return nodes; // Return empty structure
+      }
+      
       // Use container API to list files
       const response = await fetch('/api/container', {
         method: 'POST',
@@ -89,7 +96,7 @@ export default function FileExplorer({ onFileSelect, selectedFile, containerRef 
         body: JSON.stringify({
           action: 'listFiles',
           params: { path: currentPath },
-          containerUrl: containerRef.current?.getContainerUrl(),
+          containerUrl,
         }),
       });
 
@@ -148,6 +155,7 @@ export default function FileExplorer({ onFileSelect, selectedFile, containerRef 
 
   const loadFileTree = useCallback(async () => {
     if (!containerRef.current) {
+      console.log('[FileExplorer] Container ref not available, will retry...');
       setError('Container not available');
       setLoading(false);
       return;
@@ -155,6 +163,7 @@ export default function FileExplorer({ onFileSelect, selectedFile, containerRef 
 
     const containerUrl = containerRef.current.getContainerUrl();
     if (!containerUrl) {
+      console.log('[FileExplorer] Container URL not ready, will retry...');
       setError('Container not ready');
       setLoading(false);
       return;
@@ -173,7 +182,11 @@ export default function FileExplorer({ onFileSelect, selectedFile, containerRef 
       console.log('[FileExplorer] File tree loaded successfully');
     } catch (err) {
       console.error('Failed to load file tree:', err);
-      setError(err instanceof Error ? err.message : 'Failed to load files');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load files';
+      setError(errorMessage);
+      
+      // Log additional context for debugging
+      console.log('[FileExplorer] Error details:', { containerUrl, errorMessage });
     } finally {
       setLoading(false);
     }
@@ -248,17 +261,34 @@ export default function FileExplorer({ onFileSelect, selectedFile, containerRef 
   };
 
   useEffect(() => {
-    // Poll until Container is available
-    const checkAndLoad = () => {
-      if (containerRef.current?.getContainerUrl()) {
+    let shouldContinue = true;
+
+    // Check container availability periodically until it's ready
+    const checkContainer = () => {
+      if (!shouldContinue) return;
+      
+      const containerUrl = containerRef.current?.getContainerUrl();
+      if (containerUrl) {
+        console.log('[FileExplorer] Container URL available:', containerUrl);
+        shouldContinue = false; // Stop further checks
         loadFileTree();
       } else {
-        // Check again in 500ms
-        setTimeout(checkAndLoad, 500);
+        console.log('[FileExplorer] No container URL yet, waiting for deployment...');
+        setError('Waiting for container deployment to complete...');
+        setLoading(true);
+        
+        // Check again in 2 seconds if we should continue
+        if (shouldContinue) {
+          setTimeout(checkContainer, 2000);
+        }
       }
     };
+
+    checkContainer();
     
-    checkAndLoad();
+    return () => {
+      shouldContinue = false;
+    };
   }, [containerRef, loadFileTree]);
 
   if (loading) {
