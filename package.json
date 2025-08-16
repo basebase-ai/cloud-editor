@@ -6,7 +6,13 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:container": "node scripts/test-container-creation.js",
+    "test:files": "node scripts/test-file-operations.js",
+    "test:logs": "node scripts/test-log-streaming.js",
+    "test:all": "node scripts/test-runner.js",
+    "inspect:container": "node scripts/container-inspector.js",
+    "demo": "node scripts/demo.js"
   },
   "dependencies": {
     "@ai-sdk/google": "^2.0.0",
@@ -15,11 +21,11 @@
     "@mantine/hooks": "^8.2.2",
     "@mantine/notifications": "^8.2.2",
     "@tabler/icons-react": "^3.34.1",
-    "@webcontainer/api": "^1.6.1",
     "ai": "^5.0.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.536.0",
     "next": "15.4.5",
+    "node-fetch": "^3.3.2",
     "react": "19.1.0",
     "react-dom": "19.1.0"
   },

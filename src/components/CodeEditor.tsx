@@ -18,14 +18,14 @@ import {
   IconFileText,
   IconAlertCircle
 } from '@tabler/icons-react';
-import { WebContainerManagerRef } from './WebContainerManager';
+import { RailwayContainerManagerRef } from './RailwayContainerManager';
 
 interface CodeEditorProps {
   filePath: string | null;
-  webContainerRef: React.RefObject<WebContainerManagerRef | null>;
+  containerRef: React.RefObject<RailwayContainerManagerRef | null>;
 }
 
-export default function CodeEditor({ filePath, webContainerRef }: CodeEditorProps) {
+export default function CodeEditor({ filePath, containerRef }: CodeEditorProps) {
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -35,14 +35,14 @@ export default function CodeEditor({ filePath, webContainerRef }: CodeEditorProp
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   const loadFile = useCallback(async (path: string) => {
-    if (!webContainerRef.current) {
-      setError('WebContainer not available');
+    if (!containerRef.current) {
+      setError('Container not available');
       return;
     }
 
-    const webcontainer = webContainerRef.current.getWebContainer();
-    if (!webcontainer) {
-      setError('WebContainer not ready');
+    const containerUrl = containerRef.current.getContainerUrl();
+    if (!containerUrl) {
+      setError('Container not ready');
       return;
     }
 
@@ -51,7 +51,28 @@ export default function CodeEditor({ filePath, webContainerRef }: CodeEditorProp
       setError(null);
       
       console.log(`[CodeEditor] Loading file: ${path}`);
-      const fileContent = await webcontainer.fs.readFile(path, 'utf-8');
+      
+      const response = await fetch('/api/container', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'readFile',
+          params: { path },
+          containerUrl,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to read file: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      const fileContent = data.content;
       
       setContent(fileContent);
       setOriginalContent(fileContent);
@@ -65,16 +86,16 @@ export default function CodeEditor({ filePath, webContainerRef }: CodeEditorProp
     } finally {
       setLoading(false);
     }
-  }, [webContainerRef]);
+  }, [containerRef]);
 
   const saveFile = async () => {
-    if (!webContainerRef.current || !filePath) {
+    if (!containerRef.current || !filePath) {
       return;
     }
 
-    const webcontainer = webContainerRef.current.getWebContainer();
-    if (!webcontainer) {
-      setError('WebContainer not ready');
+    const containerUrl = containerRef.current.getContainerUrl();
+    if (!containerUrl) {
+      setError('Container not ready');
       return;
     }
 
@@ -83,7 +104,26 @@ export default function CodeEditor({ filePath, webContainerRef }: CodeEditorProp
       setError(null);
       
       console.log(`[CodeEditor] Saving file: ${filePath} (${content.length} characters)`);
-      await webcontainer.fs.writeFile(filePath, content);
+      
+      const response = await fetch('/api/container', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'writeFile',
+          params: { path: filePath, content },
+          containerUrl,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to save file: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
 
       setOriginalContent(content);
       setHasChanges(false);
@@ -134,12 +174,12 @@ export default function CodeEditor({ filePath, webContainerRef }: CodeEditorProp
 
   useEffect(() => {
     if (filePath) {
-      // Poll until WebContainer is available, then load file
+      // Poll until Container is available, then load file
       const checkAndLoad = () => {
-        if (webContainerRef.current?.getWebContainer()) {
+        if (containerRef.current?.getContainerUrl()) {
           loadFile(filePath);
         } else {
-          console.log('[CodeEditor] WebContainer not ready, waiting...');
+          console.log('[CodeEditor] Container not ready, waiting...');
           // Check again in 500ms
           setTimeout(checkAndLoad, 500);
         }
@@ -152,7 +192,7 @@ export default function CodeEditor({ filePath, webContainerRef }: CodeEditorProp
       setHasChanges(false);
       setError(null);
     }
-  }, [filePath, loadFile, webContainerRef]);
+  }, [filePath, loadFile, containerRef]);
 
   if (!filePath) {
     return (

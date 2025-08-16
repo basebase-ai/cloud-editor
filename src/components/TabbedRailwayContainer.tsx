@@ -3,25 +3,25 @@
 import React, { useState } from 'react';
 import { Box, Tabs, Group } from '@mantine/core';
 import { IconEye, IconFiles } from '@tabler/icons-react';
-import WebContainerManager, { WebContainerManagerRef } from './WebContainerManager';
+import RailwayContainerManager, { RailwayContainerManagerRef } from './RailwayContainerManager';
 import FileExplorer from './FileExplorer';
 import CodeEditor from './CodeEditor';
 
-interface TabbedWebContainerProps {
+interface TabbedRailwayContainerProps {
   repoUrl: string;
   githubToken: string;
-  basebaseToken: string;
+  userId?: string;
   onDevServerReady?: () => void;
-  webContainerRef: React.RefObject<WebContainerManagerRef | null>;
+  containerRef: React.RefObject<RailwayContainerManagerRef | null>;
 }
 
-export default function TabbedWebContainer({ 
+export default function TabbedRailwayContainer({ 
   repoUrl, 
-  githubToken, 
-  basebaseToken, 
+  githubToken,
+  userId,
   onDevServerReady,
-  webContainerRef
-}: TabbedWebContainerProps) {
+  containerRef
+}: TabbedRailwayContainerProps) {
   const [activeTab, setActiveTab] = useState<string | null>('preview');
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
 
@@ -38,11 +38,11 @@ export default function TabbedWebContainer({
         </Tabs.List>
 
         <Tabs.Panel value="preview" h="calc(100% - 40px)">
-          <WebContainerManager
-            ref={webContainerRef}
+          <RailwayContainerManager
+            ref={containerRef}
             repoUrl={repoUrl}
             githubToken={githubToken}
-            basebaseToken={basebaseToken}
+            userId={userId}
             onDevServerReady={onDevServerReady}
           />
         </Tabs.Panel>
@@ -61,7 +61,7 @@ export default function TabbedWebContainer({
               <FileExplorer
                 onFileSelect={setSelectedFile}
                 selectedFile={selectedFile}
-                webContainerRef={webContainerRef}
+                containerRef={containerRef}
               />
             </Box>
 
@@ -69,7 +69,7 @@ export default function TabbedWebContainer({
             <Box style={{ flex: 1 }} h="100%">
               <CodeEditor
                 filePath={selectedFile}
-                webContainerRef={webContainerRef}
+                containerRef={containerRef}
               />
             </Box>
           </Group>

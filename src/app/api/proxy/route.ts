@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
       redirect: "follow",
       signal: AbortSignal.timeout(15000),
     });
-  } catch (err) {
+  } catch (_err) {
     return NextResponse.json(
       { error: "Upstream fetch error" },
       { status: 502 }

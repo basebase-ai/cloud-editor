@@ -22,8 +22,7 @@ import {
   IconPhoto,
   IconRefresh
 } from '@tabler/icons-react';
-import { WebContainerManagerRef } from './WebContainerManager';
-import { WebContainer } from '@webcontainer/api';
+import { RailwayContainerManagerRef } from './RailwayContainerManager';
 
 interface FileNode {
   name: string;
@@ -35,10 +34,10 @@ interface FileNode {
 interface FileExplorerProps {
   onFileSelect: (filePath: string) => void;
   selectedFile: string | null;
-  webContainerRef: React.RefObject<WebContainerManagerRef | null>;
+  containerRef: React.RefObject<RailwayContainerManagerRef | null>;
 }
 
-export default function FileExplorer({ onFileSelect, selectedFile, webContainerRef }: FileExplorerProps) {
+export default function FileExplorer({ onFileSelect, selectedFile, containerRef }: FileExplorerProps) {
   const [fileTree, setFileTree] = useState<FileNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -77,35 +76,57 @@ export default function FileExplorer({ onFileSelect, selectedFile, webContainerR
 
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
 
-  const buildFileStructure = useCallback(async (webcontainer: WebContainer, currentPath: string): Promise<FileNode[]> => {
+  const buildFileStructure = useCallback(async (currentPath: string): Promise<FileNode[]> => {
     const nodes: FileNode[] = [];
     
     try {
       console.log(`[FileExplorer] Reading directory: ${currentPath}`);
-      const dirEntries = await webcontainer.fs.readdir(currentPath, { withFileTypes: true });
       
-      for (const entry of dirEntries) {
-        const filePath = currentPath === '.' ? entry.name : `${currentPath}/${entry.name}`;
+      // Use container API to list files
+      const response = await fetch('/api/container', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'listFiles',
+          params: { path: currentPath },
+          containerUrl: containerRef.current?.getContainerUrl(),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to list files: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      const files = data.files || [];
+      
+      for (const file of files) {
+        const filePath = currentPath === '.' ? file.name : `${currentPath}/${file.name}`;
         
-        if (entry.isDirectory()) {
+        if (file.type === 'directory') {
           // Recursively load directory contents
           let children: FileNode[] = [];
           try {
-            children = await buildFileStructure(webcontainer, filePath);
+            children = await buildFileStructure(filePath);
           } catch (err) {
             console.warn(`[FileExplorer] Could not read directory ${filePath}:`, err);
             // Add directory without children if we can't read it
           }
 
           nodes.push({
-            name: entry.name,
+            name: file.name,
             type: 'directory',
             path: filePath,
             children: children
           });
         } else {
           nodes.push({
-            name: entry.name,
+            name: file.name,
             type: 'file',
             path: filePath
           });
@@ -123,18 +144,18 @@ export default function FileExplorer({ onFileSelect, selectedFile, webContainerR
       }
       return a.name.localeCompare(b.name);
     });
-  }, []);
+  }, [containerRef]);
 
   const loadFileTree = useCallback(async () => {
-    if (!webContainerRef.current) {
-      setError('WebContainer not available');
+    if (!containerRef.current) {
+      setError('Container not available');
       setLoading(false);
       return;
     }
 
-    const webcontainer = webContainerRef.current.getWebContainer();
-    if (!webcontainer) {
-      setError('WebContainer not ready');
+    const containerUrl = containerRef.current.getContainerUrl();
+    if (!containerUrl) {
+      setError('Container not ready');
       setLoading(false);
       return;
     }
@@ -145,8 +166,8 @@ export default function FileExplorer({ onFileSelect, selectedFile, webContainerR
       
       console.log('[FileExplorer] Loading file tree...');
       
-      // Build nested file structure directly from WebContainer
-      const fileNodes = await buildFileStructure(webcontainer, '.');
+      // Build nested file structure using container API
+      const fileNodes = await buildFileStructure('.');
       
       setFileTree(fileNodes);
       console.log('[FileExplorer] File tree loaded successfully');
@@ -156,7 +177,7 @@ export default function FileExplorer({ onFileSelect, selectedFile, webContainerR
     } finally {
       setLoading(false);
     }
-  }, [webContainerRef, buildFileStructure]);
+  }, [containerRef, buildFileStructure]);
 
   const toggleFolder = (path: string) => {
     setExpandedFolders(prev => {
@@ -227,9 +248,9 @@ export default function FileExplorer({ onFileSelect, selectedFile, webContainerR
   };
 
   useEffect(() => {
-    // Poll until WebContainer is available
+    // Poll until Container is available
     const checkAndLoad = () => {
-      if (webContainerRef.current?.getWebContainer()) {
+      if (containerRef.current?.getContainerUrl()) {
         loadFileTree();
       } else {
         // Check again in 500ms
@@ -238,7 +259,7 @@ export default function FileExplorer({ onFileSelect, selectedFile, webContainerR
     };
     
     checkAndLoad();
-  }, [webContainerRef, loadFileTree]);
+  }, [containerRef, loadFileTree]);
 
   if (loading) {
     return (

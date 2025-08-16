@@ -1,0 +1,229 @@
+import { NextRequest, NextResponse } from "next/server";
+
+const RAILWAY_API_URL = "https://backboard.railway.app/graphql/v2";
+
+interface LogEntry {
+  timestamp: string;
+  message: string;
+  level: string;
+}
+
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  try {
+    const { searchParams } = new URL(request.url);
+    const serviceId = searchParams.get("serviceId");
+    const deploymentId = searchParams.get("deploymentId");
+    const limit = searchParams.get("limit") || "100";
+
+    // Get Railway token from server environment
+    const railwayToken = process.env.RAILWAY_TOKEN;
+
+    if (!serviceId) {
+      return NextResponse.json(
+        { error: "Missing required query parameters" },
+        { status: 400 }
+      );
+    }
+
+    if (!railwayToken) {
+      return NextResponse.json(
+        { error: "Railway credentials not configured on server" },
+        { status: 500 }
+      );
+    }
+
+    const logsQuery = `
+      query DeploymentLogs($deploymentId: String!, $limit: Int!) {
+        logs(deploymentId: $deploymentId, limit: $limit) {
+          edges {
+            node {
+              timestamp
+              message
+            }
+          }
+        }
+      }
+    `;
+
+    const response = await fetch(RAILWAY_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${railwayToken}`,
+      },
+      body: JSON.stringify({
+        query: logsQuery,
+        variables: {
+          deploymentId: deploymentId || serviceId,
+          limit: parseInt(limit, 10),
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Railway logs fetch failed:", errorText);
+      return NextResponse.json(
+        { error: "Failed to fetch logs from Railway" },
+        { status: 500 }
+      );
+    }
+
+    const data = await response.json();
+    const logs: LogEntry[] =
+      data.data?.logs?.edges?.map(
+        (edge: { node: { timestamp: string; message: string } }) => ({
+          timestamp: edge.node.timestamp,
+          message: edge.node.message,
+          level: "info", // Railway doesn't provide log levels in this format
+        })
+      ) || [];
+
+    return NextResponse.json({
+      success: true,
+      logs,
+      total: logs.length,
+    });
+  } catch (error) {
+    console.error("Railway logs error:", error);
+    return NextResponse.json(
+      {
+        error: "Internal server error",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+// Server-Sent Events endpoint for real-time log streaming
+export async function POST(request: NextRequest): Promise<Response> {
+  try {
+    const body = await request.json();
+    const { serviceId, deploymentId } = body;
+
+    // Get Railway token from server environment
+    const railwayToken = process.env.RAILWAY_TOKEN;
+
+    if (!serviceId) {
+      return new Response(
+        JSON.stringify({ error: "Missing required parameters" }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    if (!railwayToken) {
+      return new Response(
+        JSON.stringify({
+          error: "Railway credentials not configured on server",
+        }),
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Create a readable stream for Server-Sent Events
+    const stream = new ReadableStream({
+      start(controller) {
+        // Send initial connection message
+        const encoder = new TextEncoder();
+        controller.enqueue(encoder.encode('data: {"type":"connected"}\n\n'));
+
+        // Set up log polling
+        const pollLogs = async () => {
+          try {
+            const logsQuery = `
+              query DeploymentLogs($deploymentId: String!, $limit: Int!) {
+                logs(deploymentId: $deploymentId, limit: $limit) {
+                  edges {
+                    node {
+                      timestamp
+                      message
+                    }
+                  }
+                }
+              }
+            `;
+
+            const response = await fetch(RAILWAY_API_URL, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${railwayToken}`,
+              },
+              body: JSON.stringify({
+                query: logsQuery,
+                variables: {
+                  deploymentId: deploymentId || serviceId,
+                  limit: 50, // Get latest 50 logs
+                },
+              }),
+            });
+
+            if (response.ok) {
+              const data = await response.json();
+              const logs = data.data?.logs?.edges || [];
+
+              // Send each log entry
+              for (const edge of logs) {
+                const logEntry = {
+                  type: "log",
+                  timestamp: edge.node.timestamp,
+                  message: edge.node.message,
+                };
+
+                controller.enqueue(
+                  encoder.encode(`data: ${JSON.stringify(logEntry)}\n\n`)
+                );
+              }
+            }
+          } catch (error) {
+            console.error("Error polling logs:", error);
+            controller.enqueue(
+              encoder.encode(`data: {"type":"error","message":"${error}"}\n\n`)
+            );
+          }
+        };
+
+        // Poll for logs every 2 seconds
+        const interval = setInterval(pollLogs, 2000);
+
+        // Initial poll
+        pollLogs();
+
+        // Clean up on close
+        setTimeout(() => {
+          clearInterval(interval);
+          controller.close();
+        }, 5 * 60 * 1000); // Close after 5 minutes
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  } catch (error) {
+    console.error("Railway log streaming error:", error);
+    return new Response(
+      JSON.stringify({
+        error: "Internal server error",
+        details: error instanceof Error ? error.message : "Unknown error",
+      }),
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+}

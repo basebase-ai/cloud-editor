@@ -4,8 +4,8 @@ import { AppShell, Button, Text, Group, ActionIcon, Tooltip } from '@mantine/cor
 import { IconRefresh } from '@tabler/icons-react';
 import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'next/navigation';
-import { WebContainerManagerRef } from '@/components/WebContainerManager';
-import TabbedWebContainer from '@/components/TabbedWebContainer';
+import { RailwayContainerManagerRef } from '@/components/RailwayContainerManager';
+import TabbedRailwayContainer from '@/components/TabbedRailwayContainer';
 import ChatInterface, { ChatInterfaceRef } from '@/components/ChatInterface';
 import GitHubTokenModal from '@/components/GitHubTokenModal';
 import CommitModal from '@/components/CommitModal';
@@ -16,12 +16,14 @@ export default function ProjectPage() {
   const params = useParams();
   const projectId = params.projectId as string;
   const chatRef = useRef<ChatInterfaceRef>(null);
-  const webContainerRef = useRef<WebContainerManagerRef>(null);
+  const containerRef = useRef<RailwayContainerManagerRef>(null);
   const { resetTracking } = useFileTracking();
   const [hasChanges, setHasChanges] = useState<boolean>(false);
   const [repoUrl, setRepoUrl] = useState<string>('');
   const [githubToken, setGithubToken] = useState<string>('');
-  const [basebaseToken, setBasebaseToken] = useState<string>('');
+  const [userId, setUserId] = useState<string>('');
+
+
   const [isInitialized, setIsInitialized] = useState<boolean>(false);
   const [showTokenModal, setShowTokenModal] = useState<boolean>(false);
   const [showCommitModal, setShowCommitModal] = useState<boolean>(false);
@@ -57,27 +59,7 @@ export default function ProjectPage() {
       console.log('No repo URL found in query params');
     }
 
-    // Handle JWT token from URL
-    if (token) {
-      console.log('Found JWT token in URL, saving to localStorage');
-      localStorage.setItem('basebase_token', token);
-      setBasebaseToken(token);
-      
-      // Remove token from URL for security
-      const newUrl = new URL(window.location.href);
-      newUrl.searchParams.delete('token');
-      window.history.replaceState({}, '', newUrl.toString());
-      console.log('Token removed from URL');
-    } else {
-      // Check if token exists in localStorage from previous session
-      const storedToken = localStorage.getItem('basebase_token');
-      if (storedToken) {
-        console.log('Found stored JWT token in localStorage');
-        setBasebaseToken(storedToken);
-      } else {
-        console.log('No JWT token found in URL or localStorage');
-      }
-    }
+    // JWT token handling removed as it's not needed for Railway containers
 
     // Get GitHub token from localStorage (separate from JWT token)
     const githubToken = localStorage.getItem('github_token');
@@ -90,6 +72,20 @@ export default function ProjectPage() {
       console.log('No GitHub token in localStorage - will show modal');
       setShowTokenModal(true);
     }
+
+    // Get or generate userId for multi-tenant Railway services
+    let userId = localStorage.getItem('user_id');
+    if (!userId) {
+      // Generate a simple userId if none exists (could be replaced with actual auth)
+      userId = `user-${Math.random().toString(36).substring(2, 8)}`;
+      localStorage.setItem('user_id', userId);
+      console.log('Generated new userId:', userId);
+    } else {
+      console.log('Found existing userId:', userId);
+    }
+    setUserId(userId);
+
+    // Railway credentials are server-side only for security
 
     // Mark as initialized after setting initial state
     setIsInitialized(true);
@@ -120,15 +116,15 @@ export default function ProjectPage() {
   };
 
   const handleRefresh = async () => {
-    if (!webContainerRef.current) {
-      console.error('WebContainer not available');
+    if (!containerRef.current) {
+      console.error('Container not available');
       return;
     }
 
     setIsRefreshing(true);
     
     try {
-      await webContainerRef.current.restartDevServer();
+      await containerRef.current.restartDevServer();
       console.log('Dev server restart completed');
     } catch (error) {
       console.error('Error restarting dev server:', error);
@@ -185,11 +181,11 @@ export default function ProjectPage() {
 
       <AppShell.Main h="calc(100vh - 60px)">
         {isInitialized && (
-          <TabbedWebContainer 
-            webContainerRef={webContainerRef}
+          <TabbedRailwayContainer 
+            containerRef={containerRef}
             repoUrl={repoUrl}
             githubToken={githubToken}
-            basebaseToken={basebaseToken}
+            userId={userId}
             onDevServerReady={handleDevServerReady}
           />
         )}

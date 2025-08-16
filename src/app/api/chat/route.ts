@@ -241,8 +241,8 @@ function wrapToolWithStatus(
   };
 }
 
-// WebContainer bridge - simple HTTP-based communication for now
-async function callWebContainer(
+// Container bridge - simple HTTP-based communication for now
+async function callContainer(
   action: string,
   params: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
@@ -256,24 +256,24 @@ async function callWebContainer(
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || inferredOrigin;
 
-    const response = await fetch(`${baseUrl}/api/webcontainer`, {
+    const response = await fetch(`${baseUrl}/api/container`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action, params }),
     });
 
     if (!response.ok) {
-      throw new Error(`WebContainer call failed: ${response.status}`);
+      throw new Error(`Container call failed: ${response.status}`);
     }
 
     return await response.json();
   } catch (error) {
-    console.error(`WebContainer ${action} failed:`, error);
+    console.error(`Container ${action} failed:`, error);
     throw error;
   }
 }
 
-// Mock WebContainer tools - these would interact with the actual WebContainer instance
+// Container tools - these interact with the Railway container via API
 const listFilesTool = tool({
   description: "List files and directories in the project",
   inputSchema: z.object({
@@ -285,7 +285,7 @@ const listFilesTool = tool({
   execute: async ({ path }) => {
     console.log(`[Tool] list_files called with path: ${path}`);
     try {
-      const result = await callWebContainer("listFiles", { path });
+      const result = await callContainer("listFiles", { path });
       console.log(`[Tool] list_files result:`, result);
       const typedResult = result as {
         files: { name: string; type: string }[];
@@ -318,7 +318,7 @@ const readFileTool = tool({
   execute: async ({ path }) => {
     console.log(`[Tool] read_file called with path: ${path}`);
     try {
-      const result = await callWebContainer("readFile", { path });
+      const result = await callContainer("readFile", { path });
       console.log(`[Tool] read_file result:`, result);
       const typedResult = result as { content: string; path: string };
       return {
@@ -358,7 +358,7 @@ const writeFileTool = tool({
       `[Tool] write_file called with path: ${path}, content length: ${content.length}`
     );
     try {
-      const result = await callWebContainer("writeFile", { path, content });
+      const result = await callContainer("writeFile", { path, content });
       console.log(`[Tool] write_file result:`, result);
       return {
         success: result.success,
@@ -397,7 +397,7 @@ const grepFilesTool = tool({
       `[Tool] grep_files called with pattern: ${pattern}, files: ${files}`
     );
     try {
-      const result = await callWebContainer("searchFiles", { pattern, files });
+      const result = await callContainer("searchFiles", { pattern, files });
       console.log(`[Tool] grep_files result:`, result);
       return {
         results: result.results,
@@ -454,7 +454,7 @@ const checkStatusTool = tool({
   execute: async () => {
     console.log(`[Tool] check_status called`);
     try {
-      const result = await callWebContainer("checkStatus", {});
+      const result = await callContainer("checkStatus", {});
       console.log(`[Tool] check_status result:`, result);
       return {
         type: "check_status",
@@ -480,7 +480,7 @@ const checkBuildErrorsTool = tool({
   execute: async () => {
     console.log(`[Tool] check_build_errors called`);
     try {
-      const result = await callWebContainer("getBuildErrors", {});
+      const result = await callContainer("getBuildErrors", {});
       console.log(`[Tool] check_build_errors result:`, result);
       const errors = (result.errors as string[]) || [];
       return {
@@ -514,7 +514,7 @@ const deleteFileTool = tool({
   execute: async ({ path }) => {
     console.log(`[Tool] delete_file called with path: ${path}`);
     try {
-      const result = await callWebContainer("deleteFile", { path });
+      const result = await callContainer("deleteFile", { path });
       console.log(`[Tool] delete_file result:`, result);
       return {
         success: result.success,
@@ -554,7 +554,7 @@ const runCommandTool = tool({
   execute: async ({ command, args = [] }) => {
     console.log(`[Tool] run_command called: ${command} ${args.join(" ")}`);
     try {
-      const result = await callWebContainer("runCommand", { command, args });
+      const result = await callContainer("runCommand", { command, args });
       console.log(`[Tool] run_command result:`, result);
       const typedResult = result as {
         success: boolean;
@@ -607,7 +607,7 @@ const replaceLinesTool = tool({
       `[Tool] replace_lines called with path: ${path}, query length: ${query.length}, replacement length: ${replacement.length}`
     );
     try {
-      const result = await callWebContainer("replaceLines", {
+      const result = await callContainer("replaceLines", {
         path,
         query,
         replacement,
