@@ -74,6 +74,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     console.log(`Service name: ${userId} + ${projectId} -> ${serviceName}`);
 
+    // Prepare environment variables for the container
+    const environmentVariables: Record<string, string> = {
+      GITHUB_REPO_URL: repoUrl,
+      NODE_ENV: "development",
+      PROJECT_ID: projectId,
+      // Don't set PORT - let Railway set it automatically for public access
+    };
+
+    // Add GitHub token if provided (for private repos)
+    if (githubToken) {
+      environmentVariables.GITHUB_TOKEN = githubToken;
+    }
+
     // First, check if a service with this name already exists
     const existingServiceQuery = `
       query Project($id: String!) {
@@ -268,19 +281,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         variableCollectionUpsert(input: $input)
       }
     `;
-
-    // Prepare environment variables for the container
-    const environmentVariables: Record<string, string> = {
-      GITHUB_REPO_URL: repoUrl,
-      NODE_ENV: "development",
-      PROJECT_ID: projectId,
-      // Don't set PORT - let Railway set it automatically for public access
-    };
-
-    // Add GitHub token if provided (for private repos)
-    if (githubToken) {
-      environmentVariables.GITHUB_TOKEN = githubToken;
-    }
 
     // Set all environment variables in one request
     const setVariableRequest = {
@@ -528,14 +528,46 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const queryUserId = url.searchParams.get("userId");
 
     // Reconstruct service name for lookup using same logic as creation
-    // Extract repo name from projectId (format: owner-repo)
-    const repoParts = queryProjectId.split("-");
-    const repoName = repoParts[repoParts.length - 1] || queryProjectId; // Get last part or use full projectId as fallback
+    // The creation logic uses: github.com/owner/repo -> serviceName = userId-repo
+    // But we only have projectId (not the full GitHub URL) in the GET request
+    // ProjectId should be in format "owner-repo" like "basebase-ai-nextjs-starter"
+    // We need to extract just the repo part (everything after the first hyphen + username)
+    let repoName = "";
+
+    // For "basebase-ai-nextjs-starter", we want "nextjs-starter"
+    // Based on the GitHub URL pattern, let's extract the repo name properly
+    // The projectId might be malformed, so let's try different extraction methods
+    if (queryProjectId.includes("-")) {
+      // Try different patterns to extract repo name
+      const parts = queryProjectId.split("-");
+
+      // If it looks like "owner-repo-name", try taking last 2 parts
+      if (parts.length >= 3 && parts.includes("nextjs")) {
+        // Find where "nextjs" starts and take everything from there
+        const nextjsIndex = parts.findIndex((part) => part.includes("nextjs"));
+        if (nextjsIndex >= 0) {
+          repoName = parts.slice(nextjsIndex).join("-");
+        } else {
+          repoName = parts.slice(-2).join("-"); // fallback
+        }
+      } else {
+        // Simple case: take everything after first hyphen
+        const firstHyphenIndex = queryProjectId.indexOf("-");
+        repoName = queryProjectId.substring(firstHyphenIndex + 1);
+      }
+    } else {
+      repoName = queryProjectId;
+    }
+
     const cleanUserId = queryUserId
       ? queryUserId.replace(/[^a-zA-Z0-9-]/g, "")
       : "anonymous";
     const cleanRepoName = repoName.replace(/[^a-zA-Z0-9-]/g, "");
     const serviceName = `${cleanUserId}-${cleanRepoName}`;
+
+    console.log(
+      `GET: Looking for service: ${serviceName} (userId: ${queryUserId}, projectId: ${queryProjectId}, repoName: ${repoName})`
+    );
 
     const ourService = services.find(
       (service: { node: { name: string } }) => service.node.name === serviceName

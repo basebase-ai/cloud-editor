@@ -114,17 +114,32 @@ async function forwardToContainer(request: PendingRequest): Promise<void> {
   }
 
   try {
-    const containerApiUrl = `${request.containerUrl}/api/tools`;
+    // Map actions to the new /_container/ endpoints
+    const actionEndpointMap: Record<string, string> = {
+      readFile: "/_container/read_file",
+      writeFile: "/_container/write_file",
+      listFiles: "/_container/list_files",
+      runCommand: "/_container/run_command",
+      restartServer: "/_container/restart_server",
+      // checkStatus: "/_container/health", // This is a GET endpoint, incompatible with our POST approach
+      searchFiles: "/_container/search_files",
+      replaceLines: "/_container/replace_lines",
+      deleteFile: "/_container/delete_file",
+    };
+
+    const endpoint = actionEndpointMap[request.action];
+    if (!endpoint) {
+      throw new Error(`Unsupported action: ${request.action}`);
+    }
+
+    const containerApiUrl = `${request.containerUrl}${endpoint}`;
 
     const response = await fetch(containerApiUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        action: request.action,
-        params: request.params,
-      }),
+      body: JSON.stringify(request.params),
     });
 
     if (!response.ok) {

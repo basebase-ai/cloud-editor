@@ -128,6 +128,99 @@ app.post("/_container/restart_server", (req, res) => {
   }
 });
 
+// Search for files
+app.post("/_container/search_files", (req, res) => {
+  try {
+    const { pattern, path: searchPath = "." } = req.body;
+
+    if (!pattern) {
+      return res.json({ success: false, error: "Pattern is required" });
+    }
+
+    const fullPath = path.resolve(WORKSPACE_DIR, searchPath);
+    const command = `find "${fullPath}" -name "*${pattern}*" -type f`;
+
+    exec(command, (error, stdout, stderr) => {
+      if (error) {
+        return res.json({ success: false, error: error.message });
+      }
+
+      const matches = stdout
+        .split("\n")
+        .filter((line) => line.trim())
+        .map((fullPath) => {
+          return path.relative(WORKSPACE_DIR, fullPath);
+        });
+
+      res.json({ success: true, matches });
+    });
+  } catch (error) {
+    res.json({ success: false, error: error.message });
+  }
+});
+
+// Replace lines in a file
+app.post("/_container/replace_lines", (req, res) => {
+  try {
+    const { path: filePath, startLine, endLine, newContent } = req.body;
+
+    if (!filePath || startLine === undefined || endLine === undefined) {
+      return res.json({
+        success: false,
+        error: "path, startLine, and endLine are required",
+      });
+    }
+
+    const fullPath = path.resolve(WORKSPACE_DIR, filePath);
+
+    // Read the file
+    const content = fs.readFileSync(fullPath, "utf8");
+    const lines = content.split("\n");
+
+    // Replace the specified lines (convert to 0-based indexing)
+    const start = Math.max(0, startLine - 1);
+    const end = Math.min(lines.length, endLine);
+
+    // Remove old lines and insert new content
+    lines.splice(start, end - start, newContent);
+
+    // Write back to file
+    fs.writeFileSync(fullPath, lines.join("\n"));
+
+    res.json({
+      success: true,
+      message: `Lines ${startLine}-${endLine} replaced`,
+    });
+  } catch (error) {
+    res.json({ success: false, error: error.message });
+  }
+});
+
+// Delete a file
+app.post("/_container/delete_file", (req, res) => {
+  try {
+    const { path: filePath } = req.body;
+
+    if (!filePath) {
+      return res.json({ success: false, error: "path is required" });
+    }
+
+    const fullPath = path.resolve(WORKSPACE_DIR, filePath);
+
+    // Check if file exists
+    if (!fs.existsSync(fullPath)) {
+      return res.json({ success: false, error: "File not found" });
+    }
+
+    // Delete the file
+    fs.unlinkSync(fullPath);
+
+    res.json({ success: true, message: "File deleted successfully" });
+  } catch (error) {
+    res.json({ success: false, error: error.message });
+  }
+});
+
 // Simple log storage for streaming
 let logBuffer = [];
 const MAX_LOG_BUFFER = 100;

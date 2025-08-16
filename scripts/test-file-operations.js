@@ -26,12 +26,17 @@ function log(message, type = "info") {
   console.log(`${timestamp} ${prefix} ${message}`);
 }
 
-async function callContainerAPI(action, params = {}) {
+async function callContainerAPI(action, params = {}, containerUrl = null) {
   try {
+    const body = { action, params };
+    if (containerUrl) {
+      body.containerUrl = `https://${containerUrl}`;
+    }
+
     const response = await fetch(`${BASE_URL}/api/container`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, params }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {
@@ -44,8 +49,8 @@ async function callContainerAPI(action, params = {}) {
   }
 }
 
-async function testFileOperations(projectId) {
-  log(`Testing file operations for project: ${projectId}`, "step");
+async function testFileOperations(containerUrl) {
+  log(`Testing file operations for container: ${containerUrl}`, "step");
 
   const tests = [
     {
@@ -131,7 +136,11 @@ async function testFileOperations(projectId) {
     try {
       log(`Running: ${test.name}`, "step");
 
-      const result = await callContainerAPI(test.action, test.params);
+      const result = await callContainerAPI(
+        test.action,
+        test.params,
+        containerUrl
+      );
 
       if (test.validate(result)) {
         log(`✅ ${test.name}: PASSED`, "success");
@@ -191,21 +200,23 @@ async function main() {
   const args = process.argv.slice(2);
 
   if (args.length === 0) {
-    console.log("Usage: node scripts/test-file-operations.js <project-id>");
+    console.log("Usage: node scripts/test-file-operations.js <container-url>");
     console.log("");
     console.log("Example:");
-    console.log("  node scripts/test-file-operations.js user-repo");
+    console.log(
+      "  node scripts/test-file-operations.js test-user-nextjs-starter-dev.up.railway.app"
+    );
     process.exit(1);
   }
 
-  const projectId = args[0];
+  const containerUrl = args[0];
 
   log("🔧 Container File Operations Test Starting...", "step");
-  log(`Project ID: ${projectId}`, "info");
+  log(`Container URL: ${containerUrl}`, "info");
   log(`Base URL: ${BASE_URL}`, "info");
 
   try {
-    const result = await testFileOperations(projectId);
+    const result = await testFileOperations(containerUrl);
 
     if (result.success) {
       log("🎉 All file operations tests passed!", "success");

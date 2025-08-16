@@ -282,11 +282,28 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
     try {
       const { action, params } = request;
 
-      // Forward request to container API
-      const containerResponse = await fetch(`${deployment.url}/api/tools`, {
+      // Forward request to container API using new /_container/ endpoints
+      const actionEndpointMap: Record<string, string> = {
+        'readFile': '/_container/read_file',
+        'writeFile': '/_container/write_file', 
+        'listFiles': '/_container/list_files',
+        'runCommand': '/_container/run_command',
+        'restartServer': '/_container/restart_server',
+        // 'checkStatus': '/_container/health', // This is a GET endpoint, incompatible with our POST approach
+        'searchFiles': '/_container/search_files',
+        'replaceLines': '/_container/replace_lines',
+        'deleteFile': '/_container/delete_file',
+      };
+
+      const endpoint = actionEndpointMap[action];
+      if (!endpoint) {
+        throw new Error(`Unsupported action: ${action}`);
+      }
+
+      const containerResponse = await fetch(`${deployment.url}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, params }),
+        body: JSON.stringify(params),
       });
 
       if (!containerResponse.ok) {
