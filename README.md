@@ -169,9 +169,9 @@ npm run inspect:container  # Interactive container inspector
 The system supports multiple users working on the same repository simultaneously:
 
 - Each user gets a unique user ID stored in localStorage
-- Railway services are named with format: `{userHash}-{projectHash}-production`
-- Each user-project combination gets its own isolated container
-- Automatic Railway domain generation: `project-user-production.up.railway.app`
+- Railway services are named with format: `{userId}-{repoName}`
+- Each user-repo combination gets its own isolated container
+- Automatic Railway domain generation: `{userId}-{repoName}.up.railway.app`
 - Real-time log streaming is per-user session
 - No conflicts between users editing the same repository
 

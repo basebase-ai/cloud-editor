@@ -192,8 +192,7 @@ async function main() {
 
   const repoUrl = args[0];
   let githubToken = args[1];
-  let userId =
-    args[2] || `test-user-${Math.random().toString(36).substring(2, 6)}`;
+  let userId = args[2] || "test-user";
 
   // If no token provided and repo might be private, ask for it
   if (!githubToken && repoUrl.includes("github.com")) {

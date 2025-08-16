@@ -60,17 +60,140 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const [, ,] = repoMatch;
+    const [, owner, repo] = repoMatch;
+
+    // Use just the repo name, not the full projectId which includes owner
+    const cleanRepoName = repo.replace(/[^a-zA-Z0-9-]/g, "");
 
     // Create service name with userId prefix for multi-tenant support
-    // Railway has strict service naming requirements - let's use a much simpler approach
-    const userHash = userId ? userId.substring(userId.length - 4) : "anon";
-    const repoHash = projectId.substring(projectId.length - 8);
-    const serviceName = `${userHash}-${repoHash}`;
+    // Use clean format: userId-repoName (much cleaner!)
+    const cleanUserId = userId
+      ? userId.replace(/[^a-zA-Z0-9-]/g, "")
+      : "anonymous";
+    const serviceName = `${cleanUserId}-${cleanRepoName}`;
 
-    console.log(`Service name: ${projectId} + ${userId} -> ${serviceName}`);
+    console.log(`Service name: ${userId} + ${projectId} -> ${serviceName}`);
 
-    // Create service in Railway project using universal container image
+    // First, check if a service with this name already exists
+    const existingServiceQuery = `
+      query Project($id: String!) {
+        project(id: $id) {
+          services {
+            edges {
+              node {
+                id
+                name
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    const existingServiceResponse = await fetch(RAILWAY_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${railwayToken}`,
+      },
+      body: JSON.stringify({
+        query: existingServiceQuery,
+        variables: {
+          id: railwayProjectId,
+        },
+      }),
+    });
+
+    if (existingServiceResponse.ok) {
+      const existingData = await existingServiceResponse.json();
+      const services = existingData.data?.project?.services?.edges || [];
+      const existingService = services.find(
+        (service: { node: { name: string } }) =>
+          service.node.name === serviceName
+      );
+
+      if (existingService) {
+        const serviceId = existingService.node.id;
+        console.log(
+          `🔄 Reusing existing service: ${serviceName} (${serviceId})`
+        );
+
+        // Update environment variables for existing service
+        const variableCollectionMutation = `
+          mutation VariableCollectionUpsert($input: VariableCollectionUpsertInput!) {
+            variableCollectionUpsert(input: $input)
+          }
+        `;
+
+        const updateRequest = {
+          query: variableCollectionMutation,
+          variables: {
+            input: {
+              projectId: railwayProjectId,
+              environmentId: railwayEnvironmentId,
+              serviceId: serviceId,
+              variables: environmentVariables,
+              replace: false,
+              skipDeploys: false,
+            },
+          },
+        };
+
+        const updateResponse = await fetch(RAILWAY_API_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${railwayToken}`,
+          },
+          body: JSON.stringify(updateRequest),
+        });
+
+        if (updateResponse.ok) {
+          console.log("✅ Environment variables updated for existing service");
+
+          // Deploy the existing service
+          const redeployRequest = {
+            query: `
+              mutation ServiceInstanceDeploy($serviceId: String!, $environmentId: String!) {
+                serviceInstanceDeploy(serviceId: $serviceId, environmentId: $environmentId)
+              }
+            `,
+            variables: {
+              serviceId: serviceId,
+              environmentId: railwayEnvironmentId,
+            },
+          };
+
+          const redeployResponse = await fetch(RAILWAY_API_URL, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${railwayToken}`,
+            },
+            body: JSON.stringify(redeployRequest),
+          });
+
+          if (redeployResponse.ok) {
+            console.log("✅ Existing service redeployed successfully");
+
+            return NextResponse.json({
+              success: true,
+              deployment: {
+                serviceId: serviceId,
+                deploymentId: "redeployed",
+                projectId,
+                repoUrl,
+                status: "redeployed",
+                url: `https://${serviceName}.up.railway.app`,
+                createdAt: new Date().toISOString(),
+              },
+            });
+          }
+        }
+      }
+    }
+
+    // If no existing service found, create a new one
     const createServiceMutation = `
       mutation ServiceCreate($input: ServiceCreateInput!) {
         serviceCreate(input: $input) {
@@ -295,7 +418,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const publicUrl = domainData.data?.serviceDomainCreate?.domain
       ? `https://${domainData.data.serviceDomainCreate.domain}`
-      : null;
+      : `https://${serviceName}.up.railway.app`; // Fallback to expected format
 
     // Store deployment info for later use
     // In a production app, you'd store this in a database
@@ -306,6 +429,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       repoUrl,
       status: "deployed",
       url: publicUrl,
+      domainCreated: !!domainData.data?.serviceDomainCreate,
       createdAt: new Date().toISOString(),
     };
 
@@ -404,11 +528,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const queryUserId = url.searchParams.get("userId");
 
     // Reconstruct service name for lookup using same logic as creation
-    const userHash = queryUserId
-      ? queryUserId.substring(queryUserId.length - 4)
-      : "anon";
-    const repoHash = queryProjectId.substring(queryProjectId.length - 8);
-    const serviceName = `${userHash}-${repoHash}`;
+    // Extract repo name from projectId (format: owner-repo)
+    const repoParts = queryProjectId.split("-");
+    const repoName = repoParts[repoParts.length - 1] || queryProjectId; // Get last part or use full projectId as fallback
+    const cleanUserId = queryUserId
+      ? queryUserId.replace(/[^a-zA-Z0-9-]/g, "")
+      : "anonymous";
+    const cleanRepoName = repoName.replace(/[^a-zA-Z0-9-]/g, "");
+    const serviceName = `${cleanUserId}-${cleanRepoName}`;
 
     const ourService = services.find(
       (service: { node: { name: string } }) => service.node.name === serviceName
