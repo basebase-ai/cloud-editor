@@ -70,12 +70,93 @@ fi
 
 # Start container API in background
 echo "🔧 Starting container API..."
-node /usr/local/bin/container-api.js &
+NODE_PATH=/usr/local/lib/node_modules node /usr/local/bin/container-api.js &
 CONTAINER_API_PID=$!
 
-# Start the main application
+# Add iframe-friendly headers to Next.js config if it exists
+if [ -f "next.config.mjs" ] || [ -f "next.config.js" ]; then
+    echo "📋 Adding iframe headers to Next.js config..."
+    
+    # Create a backup and modify the config
+    if [ -f "next.config.mjs" ]; then
+        CONFIG_FILE="next.config.mjs"
+    else
+        CONFIG_FILE="next.config.js"
+    fi
+    
+    # Add iframe headers if not already present
+    if ! grep -q "X-Frame-Options" "$CONFIG_FILE"; then
+        # Backup original config
+        cp "$CONFIG_FILE" "${CONFIG_FILE}.original"
+        
+        # Use a simpler approach - inject headers function before the export
+        if [ "$CONFIG_FILE" = "next.config.mjs" ]; then
+            # For ES modules, add headers function before export
+            sed '/export default/i \
+\
+// Add iframe headers for embedding compatibility\
+const iframeHeaders = {\
+  async headers() {\
+    return [\
+      {\
+        source: "/(.*)",\
+        headers: [\
+          {\
+            key: "X-Frame-Options",\
+            value: "ALLOWALL",\
+          },\
+          {\
+            key: "Content-Security-Policy",\
+            value: "frame-ancestors *",\
+          },\
+          {\
+            key: "Cross-Origin-Resource-Policy",\
+            value: "cross-origin",\
+          },\
+        ],\
+      },\
+    ];\
+  },\
+};\
+\
+// Merge with original config\
+nextConfig.headers = iframeHeaders.headers;\
+' "${CONFIG_FILE}.original" > "$CONFIG_FILE"
+        else
+            # For CommonJS, similar approach
+            sed '/module.exports/i \
+\
+// Add iframe headers for embedding compatibility\
+nextConfig.headers = async function() {\
+  return [\
+    {\
+      source: "/(.*)",\
+      headers: [\
+        {\
+          key: "X-Frame-Options",\
+          value: "ALLOWALL",\
+        },\
+        {\
+          key: "Content-Security-Policy",\
+          value: "frame-ancestors *",\
+        },\
+        {\
+          key: "Cross-Origin-Resource-Policy",\
+          value: "cross-origin",\
+        },\
+      ],\
+    },\
+  ];\
+};\
+' "${CONFIG_FILE}.original" > "$CONFIG_FILE"
+        fi
+        echo "✅ Added iframe headers to $CONFIG_FILE"
+    fi
+fi
+
+# Start the main application (force port 3000 for user app)
 echo "🚀 Starting application with: $DEV_COMMAND"
-eval $DEV_COMMAND &
+PORT=3000 eval $DEV_COMMAND &
 APP_PID=$!
 
 # Function to handle graceful shutdown

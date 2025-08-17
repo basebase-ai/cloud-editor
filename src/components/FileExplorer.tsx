@@ -76,6 +76,38 @@ export default function FileExplorer({ onFileSelect, selectedFile, containerRef 
 
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
 
+  // Directories to skip for performance and relevance
+  const SKIP_DIRECTORIES = new Set([
+    'node_modules',
+    '.git',
+    '.next',
+    'dist',
+    'build',
+    'coverage',
+    '.vscode',
+    '.idea',
+    'tmp',
+    'temp',
+    '.cache',
+    '.turbo',
+    '.vercel',
+    '.netlify'
+  ]);
+
+  const shouldSkipDirectory = (dirName: string, path: string): boolean => {
+    // Skip known expensive directories
+    if (SKIP_DIRECTORIES.has(dirName)) {
+      return true;
+    }
+    
+    // Skip hidden directories (except .github, .env files at root)
+    if (dirName.startsWith('.') && path !== '.' && !dirName.match(/^\.(github|env)/)) {
+      return true;
+    }
+    
+    return false;
+  };
+
   const buildFileStructure = useCallback(async (currentPath: string): Promise<FileNode[]> => {
     const nodes: FileNode[] = [];
     
@@ -116,6 +148,12 @@ export default function FileExplorer({ onFileSelect, selectedFile, containerRef 
         const filePath = currentPath === '.' ? file.name : `${currentPath}/${file.name}`;
         
         if (file.type === 'directory') {
+          // Check if we should skip this directory
+          if (shouldSkipDirectory(file.name, currentPath)) {
+            console.log(`[FileExplorer] Skipping directory: ${filePath} (filtered)`);
+            continue; // Skip this directory entirely
+          }
+          
           // Recursively load directory contents
           let children: FileNode[] = [];
           try {
@@ -175,11 +213,13 @@ export default function FileExplorer({ onFileSelect, selectedFile, containerRef 
       
       console.log('[FileExplorer] Loading file tree...');
       
+      const startTime = Date.now();
       // Build nested file structure using container API
       const fileNodes = await buildFileStructure('.');
+      const loadTime = Date.now() - startTime;
       
       setFileTree(fileNodes);
-      console.log('[FileExplorer] File tree loaded successfully');
+      console.log(`[FileExplorer] File tree loaded successfully in ${loadTime}ms (${fileNodes.length} items)`);
     } catch (err) {
       console.error('Failed to load file tree:', err);
       const errorMessage = err instanceof Error ? err.message : 'Failed to load files';
@@ -318,12 +358,16 @@ export default function FileExplorer({ onFileSelect, selectedFile, containerRef 
   return (
     <ScrollArea h="100%">
       <Box p="md">
-        <Group justify="space-between" mb="md">
+        <Group justify="space-between" mb="xs">
           <Text fw={600} size="sm">Files</Text>
           <ActionIcon onClick={loadFileTree} variant="light" size="sm">
             <IconRefresh size={14} />
           </ActionIcon>
         </Group>
+        
+        <Text size="xs" c="dimmed" mb="md">
+          Excluding node_modules, .git, and build folders
+        </Text>
         
         <Stack gap={0}>
           {fileTree.map(node => (

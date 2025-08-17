@@ -52,6 +52,7 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
     const [selectedFile, setSelectedFile] = useState<string | null>(null);
     const [iframeError, setIframeError] = useState<string | null>(null);
     const [iframeRetryCount, setIframeRetryCount] = useState(0);
+    const [iframeLoaded, setIframeLoaded] = useState(false);
     const { markFileAsChanged } = useFileTracking();
     const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -116,7 +117,22 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
   useEffect(() => {
     setIframeRetryCount(0);
     setIframeError(null);
+    setIframeLoaded(false);
   }, [deployment?.url]);
+
+  // Timeout to detect iframe loading issues (increased since headers are now fixed)
+  useEffect(() => {
+    if (deployment?.url && !iframeLoaded && !iframeError) {
+      const timeout = setTimeout(() => {
+        if (!iframeLoaded) {
+          console.warn('Iframe failed to load within 15 seconds');
+          setIframeError('The container is taking longer than expected to respond.');
+        }
+      }, 15000); // 15 second timeout since iframe should work now
+
+      return () => clearTimeout(timeout);
+    }
+  }, [deployment?.url, iframeLoaded, iframeError]);
 
   // Auto-retry after iframe error with delay
   useEffect(() => {
@@ -129,6 +145,18 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
       return () => clearTimeout(timer);
     }
   }, [iframeError, iframeRetryCount, retryIframe]);
+
+  // Auto-retry iframe when deployment becomes ready
+  useEffect(() => {
+    if (deployment?.url && deployment.status === 'ready' && !iframeLoaded && !iframeError) {
+      console.log('Deployment is ready, attempting iframe load...');
+      const timer = setTimeout(() => {
+        setIframeRetryCount(prev => prev + 1);
+      }, 2000); // Give the service 2 seconds to fully start
+      
+      return () => clearTimeout(timer);
+    }
+  }, [deployment?.status, deployment?.url, iframeLoaded, iframeError]);
 
   // No more polling needed - deployment API will block until ready
 
@@ -451,9 +479,49 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
               ) : deployment?.url ? (
                 <Box h="100%" w="100%">
                   <Box p="xs" style={{ borderBottom: '1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4))' }}>
-                    <Text size="xs" c="dimmed">
-                      Container URL: {deployment.url}
-                    </Text>
+                    <Group justify="space-between" align="center">
+                      <Group gap="xs">
+                        <Text size="xs" c="dimmed">
+                          Container URL: {deployment.url}
+                        </Text>
+                        {!iframeLoaded && !iframeError && (
+                          <Text size="xs" c="yellow">● Loading...</Text>
+                        )}
+                        {iframeLoaded && !iframeError && (
+                          <Text size="xs" c="green">● Connected</Text>
+                        )}
+                        {iframeError && (
+                          <Text size="xs" c="red">● Failed</Text>
+                        )}
+                      </Group>
+                      <Group gap="xs">
+                        <Button 
+                          size="xs" 
+                          variant="light"
+                          leftSection={<IconRefresh size={14} />}
+                          onClick={() => {
+                            console.log('Manual iframe reload requested for:', deployment.url);
+                            setIframeRetryCount(prev => prev + 1);
+                            setIframeError(null);
+                            setIframeLoaded(false);
+                            // Force iframe reload by changing key and adding timestamp
+                            const iframe = iframeRef.current;
+                            if (iframe) {
+                              iframe.src = deployment.url + `?_reload=${Date.now()}`;
+                            }
+                          }}
+                        >
+                          Reload
+                        </Button>
+                        <Button 
+                          size="xs" 
+                          variant="light" 
+                          onClick={() => window.open(deployment.url, '_blank')}
+                        >
+                          Open in Tab
+                        </Button>
+                      </Group>
+                    </Group>
                     {iframeError && (
                       <Group gap="xs" mt="xs">
                         <Text size="xs" c="red">
@@ -467,21 +535,37 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
                       </Group>
                     )}
                   </Box>
-                  {iframeError && iframeRetryCount >= 3 ? (
+                  {iframeError ? (
                     <Box h="calc(100% - 60px)" display="flex" style={{ alignItems: 'center', justifyContent: 'center' }}>
                       <Stack align="center" gap="md">
-                        <Text size="lg" fw={500} c="red">Connection Failed</Text>
-                        <Text size="sm" c="dimmed" ta="center">
-                          The container is deployed but not responding yet.<br/>
-                          This can take 1-2 minutes for the service to start up.
+                        <Text size="lg" fw={500} c="red">Preview Not Available</Text>
+                        <Text size="sm" c="dimmed" ta="center" maw={400}>
+                          {iframeError || 'The container may still be starting up or experiencing issues.'}
                         </Text>
-                        <Button variant="light" onClick={() => {
-                          setIframeRetryCount(0);
-                          setIframeError(null);
-                          retryIframe();
-                        }}>
-                          Try Again
-                        </Button>
+                        <Text size="xs" c="dimmed" ta="center" maw={400}>
+                          URL: {deployment.url}
+                        </Text>
+                        <Text size="xs" c="dimmed" ta="center" maw={400}>
+                          Retry attempts: {iframeRetryCount}
+                        </Text>
+                        <Group gap="md">
+                          <Button 
+                            variant="filled" 
+                            onClick={() => window.open(deployment.url, '_blank')}
+                          >
+                            Open in New Tab
+                          </Button>
+                          {iframeRetryCount < 3 && (
+                            <Button variant="light" onClick={() => {
+                              setIframeRetryCount(0);
+                              setIframeError(null);
+                              setIframeLoaded(false);
+                              retryIframe();
+                            }}>
+                              Try Again
+                            </Button>
+                          )}
+                        </Group>
                       </Stack>
                     </Box>
                   ) : (
@@ -498,10 +582,17 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
                       title="Railway Container Preview"
                       onError={() => {
                         console.error('Iframe failed to load:', deployment.url);
-                        setIframeError('Failed to connect to container. The service may still be starting up.');
+                        console.error('Iframe error details:', {
+                          url: deployment.url,
+                          retryCount: iframeRetryCount,
+                          timestamp: new Date().toISOString()
+                        });
+                        setIframeLoaded(false);
+                        setIframeError('Connection refused - the container may still be starting up or there may be network issues.');
                       }}
                       onLoad={() => {
                         console.log('Iframe loaded successfully for:', deployment.url);
+                        setIframeLoaded(true);
                         setIframeError(null);
                       }}
                     />

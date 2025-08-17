@@ -179,6 +179,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       NODE_ENV: "development",
       PROJECT_ID: projectId,
       // Don't set PORT - let Railway set it automatically for public access
+
+      // Configure iframe embedding compatibility
+      IFRAME_EMBEDDING_ALLOWED: "true",
+      X_FRAME_OPTIONS: "ALLOWALL",
+      CONTENT_SECURITY_POLICY_FRAME_ANCESTORS: "*",
+      // Allow embedding from any origin for development
+      DISABLE_X_FRAME_OPTIONS: "true",
+      // Additional headers for iframe compatibility
+      ALLOW_IFRAME_EMBEDDING: "true",
+      CSP_FRAME_ANCESTORS: "*",
+      NEXT_PUBLIC_IFRAME_ALLOWED: "true",
     };
 
     // Add GitHub token if provided (for private repos)

@@ -370,6 +370,12 @@ app.use((req, res, next) => {
     // Let our container API handle it
     next();
   } else {
+    // Add iframe-friendly headers before proxying
+    res.setHeader("X-Frame-Options", "ALLOWALL");
+    res.setHeader("Content-Security-Policy", "frame-ancestors *");
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    console.log(`[Headers] Set iframe headers for: ${req.path}`);
+
     // Proxy to user app
     userAppProxy(req, res, next);
   }
