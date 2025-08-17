@@ -1,6 +1,6 @@
 const express = require("express");
 const cors = require("cors");
-const fs = require("fs");
+const fs = require("fs/promises"); // Changed to fs.promises for async operations
 const path = require("path");
 const { exec } = require("child_process");
 const { createProxyMiddleware } = require("http-proxy-middleware");
@@ -18,9 +18,24 @@ app.use(express.json());
 // CONTAINER API ROUTES (/_container/*)
 // ==========================================
 
-// Health check
+// Health check endpoint
 app.get("/_container/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+  try {
+    res.json({
+      success: true,
+      status: "healthy",
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+      logBufferSize: logBuffer.length,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString(),
+    });
+  }
 });
 
 // Read file
@@ -342,6 +357,140 @@ app.get("/_container/logs/stream", (req, res) => {
   });
 });
 
+// Poll for pending requests from the main API
+app.get("/_container/poll", async (req, res) => {
+  try {
+    console.log(`[Container API] Polling for requests...`);
+
+    // Get the base URL for the main API
+    const baseUrl = process.env.MAIN_API_URL || "http://localhost:3000";
+    const pollUrl = `${baseUrl}/api/container`;
+
+    console.log(`[Container API] Polling from: ${pollUrl}`);
+
+    const response = await fetch(pollUrl);
+
+    if (!response.ok) {
+      console.error(
+        `[Container API] Poll failed with status: ${response.status}`
+      );
+      res.json({ requests: [] });
+      return;
+    }
+
+    const data = await response.json();
+    const requests = data.requests || [];
+
+    console.log(
+      `[Container API] Received ${requests.length} requests from poll`
+    );
+
+    if (requests.length === 0) {
+      res.json({ requests: [] });
+      return;
+    }
+
+    // Process each request
+    for (const request of requests) {
+      console.log(
+        `[Container API] Processing request ${request.id}: ${request.action}`
+      );
+
+      try {
+        let result;
+
+        switch (request.action) {
+          case "listFiles":
+            result = await listFiles(request.params.path || ".");
+            break;
+          case "readFile":
+            result = await readFile(request.params.path);
+            break;
+          case "writeFile":
+            result = await writeFile(
+              request.params.path,
+              request.params.content
+            );
+            break;
+          case "searchFiles":
+            result = await searchFiles(
+              request.params.pattern,
+              request.params.files
+            );
+            break;
+          case "replaceLines":
+            result = await replaceLines(
+              request.params.path,
+              request.params.query,
+              request.params.replacement
+            );
+            break;
+          case "deleteFile":
+            result = await deleteFile(request.params.path);
+            break;
+          case "runCommand":
+            result = await runCommand(
+              request.params.command,
+              request.params.args || []
+            );
+            break;
+          case "restartServer":
+            result = await restartServer();
+            break;
+          case "checkStatus":
+            result = await checkStatus();
+            break;
+          case "getBuildErrors":
+            result = await getBuildErrors();
+            break;
+          default:
+            result = {
+              success: false,
+              error: `Unknown action: ${request.action}`,
+            };
+        }
+
+        console.log(
+          `[Container API] Request ${request.id} completed successfully:`,
+          {
+            action: request.action,
+            success: result.success,
+            error: result.error,
+            message: result.message,
+          }
+        );
+
+        // Send response back to main API
+        await fetch(pollUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            responseId: request.id,
+            result,
+          }),
+        });
+      } catch (error) {
+        console.error(`[Container API] Request ${request.id} failed:`, error);
+
+        // Send error response back to main API
+        await fetch(pollUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            responseId: request.id,
+            error: error.message,
+          }),
+        });
+      }
+    }
+
+    res.json({ requests: [] });
+  } catch (error) {
+    console.error("[Container API] Poll error:", error);
+    res.json({ requests: [] });
+  }
+});
+
 // ==========================================
 // PROXY TO USER APP (all other routes)
 // ==========================================
@@ -386,3 +535,61 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`📡 Container API available at: /_container/*`);
   console.log(`🎯 User app proxied from: http://localhost:${USER_APP_PORT}`);
 });
+
+// List files in a directory
+async function listFiles(path) {
+  console.log(`[Container API] listFiles called with path: ${path}`);
+  try {
+    const files = await fs.readdir(path, { withFileTypes: true });
+    const fileList = files.map((file) => ({
+      name: file.name,
+      type: file.isDirectory() ? "directory" : "file",
+    }));
+
+    console.log(
+      `[Container API] listFiles found ${fileList.length} items in ${path}`
+    );
+    return { success: true, files: fileList, path };
+  } catch (error) {
+    console.error(`[Container API] listFiles error:`, error);
+    return { success: false, error: error.message, path };
+  }
+}
+
+// Read file contents
+async function readFile(path) {
+  console.log(`[Container API] readFile called with path: ${path}`);
+  try {
+    const content = await fs.readFile(path, "utf8");
+    const lines = content.split("\n").length;
+
+    console.log(`[Container API] readFile read ${lines} lines from ${path}`);
+    return { success: true, content, path, lines };
+  } catch (error) {
+    console.error(`[Container API] readFile error:`, error);
+    return { success: false, error: error.message, path };
+  }
+}
+
+// Write file contents
+async function writeFile(path, content) {
+  console.log(
+    `[Container API] writeFile called with path: ${path}, content length: ${content.length}`
+  );
+  try {
+    // Ensure directory exists
+    const dir = path.split("/").slice(0, -1).join("/");
+    if (dir) {
+      await fs.mkdir(dir, { recursive: true });
+    }
+
+    await fs.writeFile(path, content, "utf8");
+    console.log(
+      `[Container API] writeFile successfully wrote ${content.length} characters to ${path}`
+    );
+    return { success: true, path };
+  } catch (error) {
+    console.error(`[Container API] writeFile error:`, error);
+    return { success: false, error: error.message, path };
+  }
+}

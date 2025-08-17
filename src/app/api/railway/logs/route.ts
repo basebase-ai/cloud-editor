@@ -15,10 +15,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const deploymentId = searchParams.get("deploymentId");
     const limit = searchParams.get("limit") || "100";
 
+    console.log(`[Railway Logs API] GET request:`, {
+      serviceId,
+      deploymentId,
+      limit,
+    });
+
     // Get Railway token from server environment
     const railwayToken = process.env.RAILWAY_TOKEN;
 
     if (!serviceId) {
+      console.error(`[Railway Logs API] Missing serviceId parameter`);
       return NextResponse.json(
         { error: "Missing required query parameters" },
         { status: 400 }
@@ -26,6 +33,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     if (!railwayToken) {
+      console.error(
+        `[Railway Logs API] Missing RAILWAY_TOKEN environment variable`
+      );
       return NextResponse.json(
         { error: "Railway credentials not configured on server" },
         { status: 500 }
@@ -45,6 +55,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       }
     `;
 
+    console.log(`[Railway Logs API] Fetching logs from Railway GraphQL API...`);
+
     const response = await fetch(RAILWAY_API_URL, {
       method: "POST",
       headers: {
@@ -60,9 +72,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       }),
     });
 
+    console.log(
+      `[Railway Logs API] Railway response status: ${response.status}`
+    );
+
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("Railway logs fetch failed:", errorText);
+      console.error("[Railway Logs API] Railway logs fetch failed:", errorText);
       return NextResponse.json(
         { error: "Failed to fetch logs from Railway" },
         { status: 500 }
@@ -79,13 +95,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         })
       ) || [];
 
+    console.log(
+      `[Railway Logs API] Retrieved ${logs.length} logs from Railway`
+    );
+
     return NextResponse.json({
       success: true,
       logs,
       total: logs.length,
     });
   } catch (error) {
-    console.error("Railway logs error:", error);
+    console.error("[Railway Logs API] Error:", error);
     return NextResponse.json(
       {
         error: "Internal server error",
@@ -102,10 +122,16 @@ export async function POST(request: NextRequest): Promise<Response> {
     const body = await request.json();
     const { serviceId, deploymentId } = body;
 
+    console.log(`[Railway Logs API] POST request for streaming:`, {
+      serviceId,
+      deploymentId,
+    });
+
     // Get Railway token from server environment
     const railwayToken = process.env.RAILWAY_TOKEN;
 
     if (!serviceId) {
+      console.error(`[Railway Logs API] Missing serviceId in POST request`);
       return new Response(
         JSON.stringify({ error: "Missing required parameters" }),
         {
@@ -116,6 +142,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     }
 
     if (!railwayToken) {
+      console.error(`[Railway Logs API] Missing RAILWAY_TOKEN for streaming`);
       return new Response(
         JSON.stringify({
           error: "Railway credentials not configured on server",
@@ -127,12 +154,19 @@ export async function POST(request: NextRequest): Promise<Response> {
       );
     }
 
+    console.log(
+      `[Railway Logs API] Starting log stream for serviceId: ${serviceId}`
+    );
+
     // Create a readable stream for Server-Sent Events
     const stream = new ReadableStream({
       start(controller) {
         // Send initial connection message
         const encoder = new TextEncoder();
         controller.enqueue(encoder.encode('data: {"type":"connected"}\n\n'));
+        console.log(
+          `[Railway Logs API] Stream connected, starting log polling...`
+        );
 
         // Set up log polling
         const pollLogs = async () => {
@@ -149,6 +183,8 @@ export async function POST(request: NextRequest): Promise<Response> {
                 }
               }
             `;
+
+            console.log(`[Railway Logs API] Polling logs from Railway...`);
 
             const response = await fetch(RAILWAY_API_URL, {
               method: "POST",
@@ -169,6 +205,10 @@ export async function POST(request: NextRequest): Promise<Response> {
               const data = await response.json();
               const logs = data.data?.logs?.edges || [];
 
+              console.log(
+                `[Railway Logs API] Polled ${logs.length} logs from Railway`
+              );
+
               // Send each log entry
               for (const edge of logs) {
                 const logEntry = {
@@ -181,9 +221,13 @@ export async function POST(request: NextRequest): Promise<Response> {
                   encoder.encode(`data: ${JSON.stringify(logEntry)}\n\n`)
                 );
               }
+            } else {
+              console.error(
+                `[Railway Logs API] Poll failed with status: ${response.status}`
+              );
             }
           } catch (error) {
-            console.error("Error polling logs:", error);
+            console.error("[Railway Logs API] Error polling logs:", error);
             controller.enqueue(
               encoder.encode(`data: {"type":"error","message":"${error}"}\n\n`)
             );
@@ -198,6 +242,9 @@ export async function POST(request: NextRequest): Promise<Response> {
 
         // Clean up on close
         setTimeout(() => {
+          console.log(
+            `[Railway Logs API] Stream timeout, closing after 5 minutes`
+          );
           clearInterval(interval);
           controller.close();
         }, 5 * 60 * 1000); // Close after 5 minutes
@@ -214,7 +261,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       },
     });
   } catch (error) {
-    console.error("Railway log streaming error:", error);
+    console.error("[Railway Logs API] Stream error:", error);
     return new Response(
       JSON.stringify({
         error: "Internal server error",

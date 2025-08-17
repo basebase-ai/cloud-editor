@@ -257,18 +257,22 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
   const startLogStreaming = useCallback(async (): Promise<void> => {
     if (!deployment) return;
 
+    console.log('[RailwayContainerManager] Starting log streaming for deployment:', deployment);
+
     try {
+      // First try Railway logs API
       const response = await fetch('/api/railway/logs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          serviceId: deployment.serviceId,
+          serviceId: deployment.serviceId || 'user-td2yj8-nextjs-starter-dev',
           deploymentId: deployment.deploymentId,
         }),
       });
 
       if (!response.ok) {
-        throw new Error('Failed to start log streaming');
+        console.warn('[RailwayContainerManager] Railway logs API failed, trying container direct logs...');
+        throw new Error('Failed to start Railway log streaming');
       }
 
       const reader = response.body?.getReader();
@@ -310,14 +314,66 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
             }
           }
         } catch (error) {
-          console.error('Error reading log stream:', error);
+          console.error('Error reading Railway log stream:', error);
+          // Fallback to container direct logs
+          startContainerDirectLogStreaming();
         }
       };
 
       readStream();
 
     } catch (error) {
-      console.error('Failed to start log streaming:', error);
+      console.error('Failed to start Railway log streaming:', error);
+      // Fallback to container direct logs
+      startContainerDirectLogStreaming();
+    }
+  }, [deployment]);
+
+  // Fallback: Direct container log streaming
+  const startContainerDirectLogStreaming = useCallback(async (): Promise<void> => {
+    if (!deployment?.url) return;
+
+    console.log('[RailwayContainerManager] Starting direct container log streaming...');
+
+    try {
+      const containerLogsUrl = `${deployment.url}/_container/logs/stream`;
+      const eventSource = new EventSource(containerLogsUrl);
+      eventSourceRef.current = eventSource;
+
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data) as LogEntry;
+          
+          if (data.type === 'log' || data.type === 'app_log') {
+            setLogs(prev => [...prev.slice(-99), data]); // Keep latest 100 logs
+            
+            // Check for build errors
+            if (data.message && (
+              data.message.includes('Error:') ||
+              data.message.includes('error:') ||
+              data.message.includes('Failed to compile') ||
+              data.message.includes('Module not found')
+            )) {
+              setBuildErrors(prev => [...prev.slice(-9), data.message]); // Keep latest 10 errors
+            }
+          }
+        } catch (parseError) {
+          console.warn('Failed to parse container log entry:', parseError);
+        }
+      };
+
+      eventSource.onerror = (error) => {
+        console.error('Container log stream error:', error);
+        eventSource.close();
+        eventSourceRef.current = null;
+      };
+
+      eventSource.onopen = () => {
+        console.log('[RailwayContainerManager] Container log stream connected');
+      };
+
+    } catch (error) {
+      console.error('Failed to start container direct log streaming:', error);
     }
   }, [deployment]);
 

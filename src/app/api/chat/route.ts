@@ -256,20 +256,43 @@ async function callContainer(
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || inferredOrigin;
 
+    console.log(`[Container API] Calling ${action} with params:`, params);
+    console.log(`[Container API] Using base URL: ${baseUrl}`);
+
     const response = await fetch(`${baseUrl}/api/container`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action, params }),
+      // Add timeout to prevent hanging
+      signal: AbortSignal.timeout(30000), // 30 second timeout
     });
 
+    console.log(`[Container API] Response status: ${response.status}`);
+
     if (!response.ok) {
-      throw new Error(`Container call failed: ${response.status}`);
+      const errorText = await response.text();
+      console.error(`[Container API] Error response:`, errorText);
+      throw new Error(
+        `Container call failed: ${response.status} - ${errorText}`
+      );
     }
 
-    return await response.json();
+    const result = await response.json();
+    console.log(`[Container API] Success response for ${action}:`, result);
+    return result;
   } catch (error) {
-    console.error(`Container ${action} failed:`, error);
-    throw error;
+    console.error(`[Container API] ${action} failed:`, error);
+
+    // Return a structured error response instead of throwing
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+      action,
+      message: `❌ Container API call failed: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`,
+      type: action,
+    };
   }
 }
 
@@ -287,6 +310,18 @@ const listFilesTool = tool({
     try {
       const result = await callContainer("listFiles", { path });
       console.log(`[Tool] list_files result:`, result);
+
+      // Check if the result indicates a failure
+      if (!result.success || result.error) {
+        return {
+          files: [],
+          path,
+          type: "list_files",
+          error: result.error || "Unknown error",
+          message: result.message || "Failed to list files",
+        };
+      }
+
       const typedResult = result as {
         files: { name: string; type: string }[];
         path: string;
@@ -305,6 +340,7 @@ const listFilesTool = tool({
         path,
         type: "list_files",
         error: error instanceof Error ? error.message : "Unknown error",
+        message: "❌ Failed to list files: Container not responding",
       };
     }
   },
@@ -320,6 +356,19 @@ const readFileTool = tool({
     try {
       const result = await callContainer("readFile", { path });
       console.log(`[Tool] read_file result:`, result);
+
+      // Check if the result indicates a failure
+      if (!result.success || result.error) {
+        return {
+          content: `❌ Could not read file: ${result.error || "Unknown error"}`,
+          path,
+          lines: 0,
+          type: "read_file",
+          error: result.error || "Unknown error",
+          message: result.message || "Failed to read file",
+        };
+      }
+
       const typedResult = result as { content: string; path: string };
       return {
         content: typedResult.content,
@@ -337,6 +386,7 @@ const readFileTool = tool({
         lines: 0,
         type: "read_file",
         error: errorMessage,
+        message: "❌ Failed to read file: Container not responding",
       };
     }
   },
@@ -648,7 +698,15 @@ export async function POST(req: Request) {
   try {
     const { messages } = await req.json();
 
+    console.log(`[Chat API] ===== NEW CHAT REQUEST =====`);
+    console.log(`[Chat API] Request received with ${messages.length} messages`);
+    console.log(
+      `[Chat API] Last user message:`,
+      messages[messages.length - 1]?.content?.substring(0, 100) + "..."
+    );
+
     if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+      console.error(`[Chat API] Missing GOOGLE_GENERATIVE_AI_API_KEY`);
       return new Response("GOOGLE_GENERATIVE_AI_API_KEY is not configured", {
         status: 500,
       });
@@ -667,10 +725,17 @@ export async function POST(req: Request) {
     // Debug context captured during a single chat request
     let lastGrepFiles: string[] = [];
     let lastListedItems: string[] = [];
+    let toolCallCount = 0;
 
     // Listen for tool events and write status messages immediately to stream
     statusEmitter.on("toolStart", (data: unknown) => {
+      toolCallCount++;
       const { toolName, args } = data as ToolStartEvent;
+      console.log(
+        `[Chat API] Tool ${toolCallCount} STARTING: ${toolName}`,
+        args
+      );
+
       let message = getToolStartMessage(toolName, args);
       // Enrich replace_lines start with recent grep context
       if (toolName === "replace_lines") {
@@ -704,12 +769,27 @@ export async function POST(req: Request) {
 
     statusEmitter.on("toolComplete", (data: unknown) => {
       const { toolName, result } = data as ToolCompleteEvent;
+      console.log(`[Chat API] Tool ${toolCallCount} COMPLETED: ${toolName}`, {
+        success: result.success,
+        error: result.error,
+        message: result.message,
+        type: result.type,
+        // Log file-specific info for debugging
+        path: result.path,
+        files: Array.isArray(result.files) ? result.files.length : undefined,
+        contentLength:
+          typeof result.content === "string"
+            ? result.content.length
+            : undefined,
+      });
+
       // Track files from last grep to help debug later decisions
       if (toolName === "grep_files") {
         try {
           const results = (result.results as Array<{ file: string }>) || [];
           const files = Array.from(new Set(results.map((r) => r.file)));
           lastGrepFiles = files;
+          console.log(`[Chat API] Updated lastGrepFiles:`, lastGrepFiles);
         } catch {
           // ignore
         }
@@ -717,6 +797,7 @@ export async function POST(req: Request) {
         try {
           const files = (result.files as string[]) || [];
           lastListedItems = files;
+          console.log(`[Chat API] Updated lastListedItems:`, lastListedItems);
         } catch {
           // ignore
         }
@@ -732,6 +813,12 @@ export async function POST(req: Request) {
 
     statusEmitter.on("toolError", (data: unknown) => {
       const { toolName, error } = data as ToolErrorEvent;
+      console.error(`[Chat API] Tool ${toolCallCount} ERROR: ${toolName}`, {
+        error: error.message,
+        stack: error.stack,
+        name: error.name,
+      });
+
       const message = `❌ ${toolName} failed: ${error.message}\n`;
       console.log(`[Tool Status] ${toolName} error:`, error);
 
@@ -791,13 +878,17 @@ export async function POST(req: Request) {
       ),
     };
 
+    console.log(`[Chat API] Enhanced tools created, starting streamText...`);
+
     // Create custom stream that provides immediate status updates
     const customStream = new ReadableStream({
       async start(controller) {
         // Make controller available for immediate status message writing
         streamController = controller;
+        console.log(`[Chat API] Stream controller initialized`);
 
         try {
+          console.log(`[Chat API] Calling streamText with Google Gemini...`);
           const result = await streamText({
             model: google("gemini-1.5-pro"),
             messages,
@@ -874,12 +965,23 @@ Always be thorough and methodical in your approach. Break down complex requests 
             },
           });
 
+          console.log(
+            `[Chat API] streamText started successfully, beginning to stream response...`
+          );
+
           // Stream AI response chunks
+          let chunkCount = 0;
           for await (const chunk of result.textStream) {
+            chunkCount++;
+            if (chunkCount % 10 === 0) {
+              console.log(`[Chat API] Streamed ${chunkCount} chunks so far...`);
+            }
             controller.enqueue(new TextEncoder().encode(chunk));
           }
+
+          console.log(`[Chat API] Stream completed after ${chunkCount} chunks`);
         } catch (error) {
-          console.error("Stream error:", error);
+          console.error("[Chat API] Stream error:", error);
           controller.enqueue(
             new TextEncoder().encode(
               `Error: ${
@@ -888,6 +990,9 @@ Always be thorough and methodical in your approach. Break down complex requests 
             )
           );
         } finally {
+          console.log(
+            `[Chat API] Stream controller closing, total tool calls: ${toolCallCount}`
+          );
           controller.close();
           streamController = null;
         }
@@ -906,7 +1011,7 @@ Always be thorough and methodical in your approach. Break down complex requests 
       },
     });
   } catch (error) {
-    console.error("Chat API error:", error);
+    console.error("[Chat API] Top-level error:", error);
     return new Response("Internal server error", { status: 500 });
   }
 }

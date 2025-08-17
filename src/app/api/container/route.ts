@@ -38,22 +38,39 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const { action, params, responseId, result, error, containerUrl } =
       await request.json();
 
+    console.log(`[Container API] ===== NEW REQUEST =====`);
+    console.log(`[Container API] Action: ${action}`);
+    console.log(`[Container API] ResponseId: ${responseId || "none"}`);
+    console.log(`[Container API] ContainerUrl: ${containerUrl || "none"}`);
+    console.log(`[Container API] Params:`, params);
+
     // Handle response from container
     if (responseId) {
+      console.log(
+        `[Container API] Processing response for request ${responseId}`
+      );
       const inFlightRequest = inFlightRequests.get(responseId);
       if (inFlightRequest) {
+        console.log(`[Container API] Found in-flight request, resolving...`);
         inFlightRequests.delete(responseId);
         if (error) {
+          console.error(`[Container API] Response contains error:`, error);
           inFlightRequest.reject(new Error(error));
         } else {
+          console.log(`[Container API] Response successful:`, result);
           inFlightRequest.resolve(result);
         }
+      } else {
+        console.warn(
+          `[Container API] No in-flight request found for responseId: ${responseId}`
+        );
       }
       return NextResponse.json({ success: true });
     }
 
     // Handle new request from server-side tools
     const requestId = crypto.randomUUID();
+    console.log(`[Container API] Creating new request with ID: ${requestId}`);
 
     return new Promise<NextResponse>((resolve) => {
       const pendingRequest: PendingRequest = {
@@ -62,23 +79,40 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         params,
         containerUrl,
         resolve: (result) => {
+          console.log(
+            `[Container API] Request ${requestId} resolved successfully:`,
+            result
+          );
           resolve(NextResponse.json(result));
         },
         reject: (error) => {
+          console.error(
+            `[Container API] Request ${requestId} rejected:`,
+            error.message
+          );
           resolve(NextResponse.json({ error: error.message }, { status: 500 }));
         },
         timestamp: Date.now(),
       };
 
       pendingRequests.set(requestId, pendingRequest);
+      console.log(
+        `[Container API] Request ${requestId} added to pending queue. Total pending: ${pendingRequests.size}`
+      );
 
-      // If we have a container URL, try to forward the request directly
-      if (containerUrl && action !== "runCommand") {
-        forwardToContainer(pendingRequest);
-      }
+      // Always try to forward directly to the deployed container
+      const deployedContainerUrl =
+        "https://user-td2yj8-nextjs-starter-dev.up.railway.app";
+      console.log(
+        `[Container API] Forwarding request ${requestId} directly to deployed container: ${deployedContainerUrl}`
+      );
+
+      // Update the request with the correct container URL
+      pendingRequest.containerUrl = deployedContainerUrl;
+      forwardToContainer(pendingRequest);
     });
   } catch (error) {
-    console.error("Container API error:", error);
+    console.error("[Container API] Top-level error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }
@@ -87,6 +121,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 }
 
 export async function GET(): Promise<NextResponse> {
+  console.log(`[Container API] ===== POLL REQUEST =====`);
+  console.log(`[Container API] Pending requests: ${pendingRequests.size}`);
+  console.log(`[Container API] In-flight requests: ${inFlightRequests.size}`);
+
   // Move pending requests to in-flight (proper queue semantics)
   const requests = Array.from(pendingRequests.values()).map((request) => ({
     id: request.id,
@@ -95,12 +133,19 @@ export async function GET(): Promise<NextResponse> {
     containerUrl: request.containerUrl,
   }));
 
+  console.log(
+    `[Container API] Returning ${requests.length} requests to container`
+  );
+
   // Move to in-flight
   for (const request of requests) {
     const pendingRequest = pendingRequests.get(request.id);
     if (pendingRequest) {
       inFlightRequests.set(request.id, pendingRequest);
       pendingRequests.delete(request.id);
+      console.log(
+        `[Container API] Moved request ${request.id} from pending to in-flight`
+      );
     }
   }
 
@@ -174,6 +219,18 @@ async function forwardToContainer(request: PendingRequest): Promise<void> {
     request.resolve(result);
   } catch (error) {
     console.error("Failed to forward request to container:", error);
-    request.reject(error instanceof Error ? error : new Error("Unknown error"));
+
+    // If it's a timeout error, provide a more helpful message
+    if (error instanceof Error && error.name === "AbortError") {
+      request.reject(
+        new Error(
+          "Container API request timed out. The container may be overloaded or not responding."
+        )
+      );
+    } else {
+      request.reject(
+        error instanceof Error ? error : new Error("Unknown error")
+      );
+    }
   }
 }
