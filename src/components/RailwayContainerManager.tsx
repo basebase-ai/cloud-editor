@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { Box, Loader, Text, Stack, Alert, Button, Tabs, Group } from '@mantine/core';
 import { IconAlertCircle, IconRefresh, IconEye, IconTerminal, IconFiles } from '@tabler/icons-react';
+import { TextInput } from '@mantine/core';
 import FileExplorer from './FileExplorer';
 import CodeEditor from './CodeEditor';
 import { useFileTracking } from '@/hooks/useFileTracking';
@@ -50,9 +51,12 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
     const [buildErrors, setBuildErrors] = useState<string[]>([]);
     const [activeTab, setActiveTab] = useState<string | null>('preview');
     const [selectedFile, setSelectedFile] = useState<string | null>(null);
-    const [iframeError, setIframeError] = useState<string | null>(null);
-    const [iframeRetryCount, setIframeRetryCount] = useState(0);
-    const [iframeLoaded, setIframeLoaded] = useState(false);
+      const [iframeError, setIframeError] = useState<string | null>(null);
+  const [iframeRetryCount, setIframeRetryCount] = useState(0);
+  const [iframeLoaded, setIframeLoaded] = useState(false);
+  const [currentUrl, setCurrentUrl] = useState('');
+  const [shouldShowIframe, setShouldShowIframe] = useState(false);
+  const [isContainerHealthy, setIsContainerHealthy] = useState(false);
     const { markFileAsChanged } = useFileTracking();
     const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -120,20 +124,6 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
     setIframeLoaded(false);
   }, [deployment?.url]);
 
-  // Timeout to detect iframe loading issues (increased since headers are now fixed)
-  useEffect(() => {
-    if (deployment?.url && !iframeLoaded && !iframeError) {
-      const timeout = setTimeout(() => {
-        if (!iframeLoaded) {
-          console.warn('Iframe failed to load within 15 seconds');
-          setIframeError('The container is taking longer than expected to respond.');
-        }
-      }, 15000); // 15 second timeout since iframe should work now
-
-      return () => clearTimeout(timeout);
-    }
-  }, [deployment?.url, iframeLoaded, iframeError]);
-
   // Auto-retry after iframe error with delay
   useEffect(() => {
     if (iframeError && iframeRetryCount < 3) {
@@ -146,17 +136,64 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
     }
   }, [iframeError, iframeRetryCount, retryIframe]);
 
-  // Auto-retry iframe when deployment becomes ready
+  // Show iframe when container is healthy
   useEffect(() => {
-    if (deployment?.url && deployment.status === 'ready' && !iframeLoaded && !iframeError) {
-      console.log('Deployment is ready, attempting iframe load...');
-      const timer = setTimeout(() => {
-        setIframeRetryCount(prev => prev + 1);
-      }, 2000); // Give the service 2 seconds to fully start
-      
-      return () => clearTimeout(timer);
+    if (isContainerHealthy && !iframeLoaded) {
+      console.log('Container is healthy, showing iframe');
+      setShouldShowIframe(true);
+      setIframeRetryCount(prev => prev + 1);
     }
-  }, [deployment?.status, deployment?.url, iframeLoaded, iframeError]);
+  }, [isContainerHealthy, iframeLoaded]);
+
+  // Update currentUrl when deployment URL changes
+  useEffect(() => {
+    if (deployment?.url && currentUrl !== deployment.url) {
+      setCurrentUrl(deployment.url);
+      // Reset iframe visibility when URL changes (new deployment)
+      setShouldShowIframe(false);
+      // Reset health state for new deployment
+      setIsContainerHealthy(false);
+    }
+  }, [deployment?.url, currentUrl]);
+
+  // Handle URL changes and iframe navigation
+  const handleUrlChange = useCallback((newUrl: string) => {
+    setCurrentUrl(newUrl);
+    setIframeError(null);
+    setIframeLoaded(false);
+    setIframeRetryCount(0);
+    
+    // Update iframe src if iframe exists
+    const iframe = iframeRef.current;
+    if (iframe) {
+      iframe.src = newUrl;
+    }
+  }, []);
+
+  const handleUrlSubmit = useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      const target = event.target as HTMLInputElement;
+      handleUrlChange(target.value);
+    }
+  }, [handleUrlChange]);
+
+  const handleReload = useCallback(() => {
+    console.log('Manual iframe reload requested for:', currentUrl);
+    setIframeRetryCount(prev => prev + 1);
+    setIframeError(null);
+    setIframeLoaded(false);
+    // Force show iframe immediately for manual reloads
+    setShouldShowIframe(true);
+    
+    // Force iframe reload by changing src with timestamp
+    const iframe = iframeRef.current;
+    if (iframe && currentUrl) {
+      const urlWithTimestamp = currentUrl.includes('?') 
+        ? `${currentUrl}&_reload=${Date.now()}`
+        : `${currentUrl}?_reload=${Date.now()}`;
+      iframe.src = urlWithTimestamp;
+    }
+  }, [currentUrl]);
 
   // No more polling needed - deployment API will block until ready
 
@@ -171,7 +208,7 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
       setIsDeploying(true);
       setIsLoading(true);
       setError('');
-                setStatus('Deploying container to Railway... This may take up to 2 minutes.');
+                setStatus('Deploying container to Railway... This may take up to 30 seconds.');
 
       // Extract project ID from repo URL
       const repoMatch = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);
@@ -294,126 +331,70 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
     deployContainer();
   }, [repoUrl, deployment, isDeploying, deployContainer]);
 
-    // Start log streaming when deployment is ready
-    useEffect(() => {
-      if (deployment && deployment.status === 'SUCCESS') {
-        startLogStreaming();
-        
-        // Mark as ready after a short delay to allow server to start
-        setTimeout(() => {
-          setIsLoading(false);
-          setStatus('Container ready');
-          onDevServerReady?.();
-        }, 5000);
-      }
-
-      return () => {
-        if (eventSourceRef.current) {
-          eventSourceRef.current.close();
-          eventSourceRef.current = null;
-        }
-          };
-  }, [deployment, onDevServerReady, startLogStreaming]);
-
-  const handleContainerRequest = useCallback(async (request: { id: string; action: string; params: Record<string, unknown>; containerUrl?: string }): Promise<void> => {
-    if (!deployment?.url) {
-      await sendResponse(request.id, null, 'Container not available');
-      return;
-    }
-
+      // Health check function
+  const checkContainerHealth = useCallback(async (containerUrl: string): Promise<boolean> => {
     try {
-      const { action, params } = request;
-
-      // Forward request to container API using new /_container/ endpoints
-      const actionEndpointMap: Record<string, string> = {
-        'readFile': '/_container/read_file',
-        'writeFile': '/_container/write_file', 
-        'listFiles': '/_container/list_files',
-        'runCommand': '/_container/run_command',
-        'restartServer': '/_container/restart_server',
-        // 'checkStatus': '/_container/health', // This is a GET endpoint, incompatible with our POST approach
-        'searchFiles': '/_container/search_files',
-        'replaceLines': '/_container/replace_lines',
-        'deleteFile': '/_container/delete_file',
-      };
-
-      const endpoint = actionEndpointMap[action];
-      if (!endpoint) {
-        throw new Error(`Unsupported action: ${action}`);
-      }
-
-      const containerResponse = await fetch(`${deployment.url}${endpoint}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params),
-      });
-
-      if (!containerResponse.ok) {
-        throw new Error(`Container API responded with ${containerResponse.status}`);
-      }
-
-      const result = await containerResponse.json();
-
-      // Update file tracking for write operations
-      if (action === 'writeFile' && result.success) {
-        markFileAsChanged(params.path as string, params.content as string);
-      } else if (action === 'replaceLines' && result.success) {
-        // For replace operations, we'd need to fetch the updated content
-        // This is a simplified approach
-        markFileAsChanged(params.path as string, 'updated');
-      }
-
-      await sendResponse(request.id, result, null);
+      const healthResponse = await fetch(`${containerUrl}/_container/health`);
+      return healthResponse.ok;
     } catch (error) {
-      console.error(`Container ${request.action} failed:`, error);
-      await sendResponse(request.id, null, error instanceof Error ? error.message : 'Unknown error');
+      return false;
     }
-  }, [deployment, markFileAsChanged]);
+  }, []);
 
-  const sendResponse = async (responseId: string, result: Record<string, unknown> | null, error: string | null): Promise<void> => {
-    try {
-      await fetch('/api/container', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ responseId, result, error })
-      });
-    } catch (err) {
-      console.error('Failed to send container response:', err);
-    }
-  };
-
-  // Container bridge - poll for requests from server-side tools
+  // Start health check and log streaming when deployment is ready
   useEffect(() => {
-      let pollInterval: NodeJS.Timeout;
-
-      const pollForRequests = async () => {
-        if (!deployment?.url) return;
-
-        try {
-          const response = await fetch('/api/container');
-          if (response.ok) {
-            const data = await response.json();
-            
-            for (const request of data.requests) {
-              await handleContainerRequest(request);
-            }
+    if (deployment && deployment.status === 'SUCCESS' && deployment.url) {
+      console.log('Deployment successful, starting health check...');
+      setStatus('Checking container health...');
+      
+      const performHealthCheck = async () => {
+        let attempts = 0;
+        const maxAttempts = 30; // 60 seconds total (30 * 2 second intervals)
+        
+        while (attempts < maxAttempts) {
+          attempts++;
+          console.log(`Health check attempt ${attempts}/${maxAttempts}...`);
+          
+          if (await checkContainerHealth(deployment.url!)) {
+            console.log('Container is healthy!');
+            setIsContainerHealthy(true);
+            setStatus('Container ready');
+            setIsLoading(false);
+            startLogStreaming();
+            onDevServerReady?.();
+            return;
           }
-        } catch (error) {
-          console.error('Failed to poll for container requests:', error);
+          
+          if (attempts < maxAttempts) {
+            console.log('Container not ready yet, retrying in 2 seconds...');
+            setStatus(`Checking container health... (attempt ${attempts}/${maxAttempts})`);
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
         }
+        
+        // If we get here, health check failed
+        console.error('Container health check failed after maximum attempts');
+        setStatus('Container health check failed');
+        setError('Container failed to start properly');
+        setIsLoading(false);
       };
+      
+      performHealthCheck();
+    }
 
-      if (deployment?.url && !isLoading) {
-        console.log('[Container] Starting polling for tool requests');
-        pollInterval = setInterval(pollForRequests, 1000);
-      }
-
-      return () => {
-        if (pollInterval) {
-                  clearInterval(pollInterval);
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
       }
     };
-  }, [deployment, isLoading, handleContainerRequest]);
+  }, [deployment, onDevServerReady, startLogStreaming, checkContainerHealth]);
+
+  // Direct API calls are used instead of polling
+
+  // Direct API calls are used instead of polling
+
+    // No polling needed - direct API calls are used instead
 
 
 
@@ -476,51 +457,39 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
                     <Text size="sm" c="dimmed">{status}</Text>
                   </Stack>
                 </Box>
-              ) : deployment?.url ? (
+              ) : deployment?.url && shouldShowIframe ? (
                 <Box h="100%" w="100%">
                   <Box p="xs" style={{ borderBottom: '1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4))' }}>
-                    <Group justify="space-between" align="center">
-                      <Group gap="xs">
-                        <Text size="xs" c="dimmed">
-                          Container URL: {deployment.url}
-                        </Text>
-                        {!iframeLoaded && !iframeError && (
-                          <Text size="xs" c="yellow">● Loading...</Text>
-                        )}
-                        {iframeLoaded && !iframeError && (
-                          <Text size="xs" c="green">● Connected</Text>
-                        )}
-                        {iframeError && (
-                          <Text size="xs" c="red">● Failed</Text>
-                        )}
-                      </Group>
-                      <Group gap="xs">
-                        <Button 
-                          size="xs" 
-                          variant="light"
-                          leftSection={<IconRefresh size={14} />}
-                          onClick={() => {
-                            console.log('Manual iframe reload requested for:', deployment.url);
-                            setIframeRetryCount(prev => prev + 1);
-                            setIframeError(null);
-                            setIframeLoaded(false);
-                            // Force iframe reload by changing key and adding timestamp
-                            const iframe = iframeRef.current;
-                            if (iframe) {
-                              iframe.src = deployment.url + `?_reload=${Date.now()}`;
-                            }
-                          }}
-                        >
-                          Reload
-                        </Button>
-                        <Button 
-                          size="xs" 
-                          variant="light" 
-                          onClick={() => window.open(deployment.url, '_blank')}
-                        >
-                          Open in Tab
-                        </Button>
-                      </Group>
+                    <Group gap="xs" align="center">
+                      <TextInput
+                        value={currentUrl}
+                        onChange={(event) => setCurrentUrl(event.currentTarget.value)}
+                        onKeyDown={handleUrlSubmit}
+                        placeholder="Enter URL..."
+                        size="xs"
+                        style={{ flex: 1 }}
+                        rightSection={
+                          <Group gap="xs" wrap="nowrap">
+                            {!iframeLoaded && !iframeError && (
+                              <Text size="xs" c="yellow">●</Text>
+                            )}
+                            {iframeLoaded && !iframeError && (
+                              <Text size="xs" c="green">●</Text>
+                            )}
+                            {iframeError && (
+                              <Text size="xs" c="red">●</Text>
+                            )}
+                          </Group>
+                        }
+                      />
+                      <Button 
+                        size="xs" 
+                        variant="light"
+                        p={4}
+                        onClick={handleReload}
+                      >
+                        <IconRefresh size={14} />
+                      </Button>
                     </Group>
                     {iframeError && (
                       <Group gap="xs" mt="xs">
@@ -543,7 +512,7 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
                           {iframeError || 'The container may still be starting up or experiencing issues.'}
                         </Text>
                         <Text size="xs" c="dimmed" ta="center" maw={400}>
-                          URL: {deployment.url}
+                          URL: {currentUrl}
                         </Text>
                         <Text size="xs" c="dimmed" ta="center" maw={400}>
                           Retry attempts: {iframeRetryCount}
@@ -551,7 +520,7 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
                         <Group gap="md">
                           <Button 
                             variant="filled" 
-                            onClick={() => window.open(deployment.url, '_blank')}
+                            onClick={() => window.open(currentUrl, '_blank')}
                           >
                             Open in New Tab
                           </Button>
@@ -571,8 +540,8 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
                   ) : (
                     <iframe
                       ref={iframeRef}
-                      src={deployment.url}
-                      key={`iframe-${deployment.url}-${iframeRetryCount}`}
+                      src={currentUrl}
+                      key={`iframe-${currentUrl}-${iframeRetryCount}`}
                       style={{
                         width: '100%',
                         height: 'calc(100% - 60px)',
@@ -581,9 +550,9 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
                       }}
                       title="Railway Container Preview"
                       onError={() => {
-                        console.error('Iframe failed to load:', deployment.url);
+                        console.error('Iframe failed to load:', currentUrl);
                         console.error('Iframe error details:', {
-                          url: deployment.url,
+                          url: currentUrl,
                           retryCount: iframeRetryCount,
                           timestamp: new Date().toISOString()
                         });
@@ -591,12 +560,19 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
                         setIframeError('Connection refused - the container may still be starting up or there may be network issues.');
                       }}
                       onLoad={() => {
-                        console.log('Iframe loaded successfully for:', deployment.url);
+                        console.log('Iframe loaded successfully for:', currentUrl);
                         setIframeLoaded(true);
                         setIframeError(null);
                       }}
                     />
                   )}
+                </Box>
+              ) : deployment?.url && !shouldShowIframe ? (
+                <Box h="100%" display="flex" style={{ alignItems: 'center', justifyContent: 'center' }}>
+                  <Stack align="center" gap="md">
+                    <Loader size="lg" />
+                    <Text size="sm" c="dimmed">Container deployed! Starting application...</Text>
+                  </Stack>
                 </Box>
               ) : (
                 <Box h="100%" display="flex" style={{ alignItems: 'center', justifyContent: 'center' }}>
