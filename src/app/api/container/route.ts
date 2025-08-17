@@ -170,6 +170,7 @@ async function forwardToContainer(request: PendingRequest): Promise<void> {
       searchFiles: "/_container/search_files",
       replaceLines: "/_container/replace_lines",
       deleteFile: "/_container/delete_file",
+      runLinter: "/_container/run_linter",
     };
 
     const endpoint = actionEndpointMap[request.action];

@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const fs = require("fs/promises"); // Changed to fs.promises for async operations
+const fsSync = require("fs"); // For synchronous operations in endpoint handlers
 const path = require("path");
 const { exec } = require("child_process");
 const { createProxyMiddleware } = require("http-proxy-middleware");
@@ -47,7 +48,7 @@ app.post("/_container/read_file", (req, res) => {
     }
 
     const fullPath = path.join(WORKSPACE_DIR, filePath);
-    const content = fs.readFileSync(fullPath, "utf8");
+    const content = fsSync.readFileSync(fullPath, "utf8");
     res.json({ success: true, content });
   } catch (error) {
     res.json({ success: false, error: error.message });
@@ -69,9 +70,9 @@ app.post("/_container/write_file", (req, res) => {
 
     // Ensure directory exists
     const dir = path.dirname(fullPath);
-    fs.mkdirSync(dir, { recursive: true });
+    fsSync.mkdirSync(dir, { recursive: true });
 
-    fs.writeFileSync(fullPath, content, "utf8");
+    fsSync.writeFileSync(fullPath, content, "utf8");
     res.json({ success: true });
   } catch (error) {
     res.json({ success: false, error: error.message });
@@ -84,9 +85,9 @@ app.post("/_container/list_files", (req, res) => {
     const { path: dirPath = "." } = req.body;
     const fullPath = path.join(WORKSPACE_DIR, dirPath);
 
-    const files = fs.readdirSync(fullPath).map((file) => {
+    const files = fsSync.readdirSync(fullPath).map((file) => {
       const filePath = path.join(fullPath, file);
-      const stats = fs.statSync(filePath);
+      const stats = fsSync.statSync(filePath);
       return {
         name: file,
         type: stats.isDirectory() ? "directory" : "file",
@@ -143,8 +144,8 @@ app.post("/_container/restart_server", (req, res) => {
   }
 });
 
-// Search for files
-app.post("/_container/search_files", (req, res) => {
+// Search for files containing text
+app.post("/_container/search_files", async (req, res) => {
   try {
     const { pattern, path: searchPath = "." } = req.body;
 
@@ -152,25 +153,69 @@ app.post("/_container/search_files", (req, res) => {
       return res.json({ success: false, error: "Pattern is required" });
     }
 
-    const fullPath = path.resolve(WORKSPACE_DIR, searchPath);
-    const command = `find "${fullPath}" -name "*${pattern}*" -type f`;
+    console.log(
+      `[Container API] search_files endpoint called with pattern: ${pattern}, path: ${searchPath}`
+    );
 
-    exec(command, (error, stdout, stderr) => {
+    // Use the async searchFiles function for content-based search
+    const result = await searchFiles(pattern, [searchPath]);
+
+    res.json(result);
+  } catch (error) {
+    console.error(`[Container API] search_files endpoint error:`, error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+// Run linter
+app.post("/_container/run_linter", (req, res) => {
+  try {
+    const { files = "all" } = req.body;
+
+    // Try to run the linter (assuming ESLint is configured)
+    const command = `npm run lint ${files === "all" ? "" : files}`;
+
+    exec(command, { cwd: WORKSPACE_DIR }, (error, stdout, stderr) => {
       if (error) {
-        return res.json({ success: false, error: error.message });
-      }
+        // Parse the output for linting errors and warnings
+        const output = stdout + stderr;
+        const lines = output.split("\n");
 
-      const matches = stdout
-        .split("\n")
-        .filter((line) => line.trim())
-        .map((fullPath) => {
-          return path.relative(WORKSPACE_DIR, fullPath);
+        const errors = [];
+        const warnings = [];
+
+        for (const line of lines) {
+          if (line.includes("error") || line.includes("Error")) {
+            errors.push(line.trim());
+          } else if (line.includes("warning") || line.includes("Warning")) {
+            warnings.push(line.trim());
+          }
+        }
+
+        res.json({
+          success: false,
+          errors,
+          warnings,
+          message: `Linting found ${errors.length} errors and ${warnings.length} warnings`,
+          stdout,
+          stderr,
         });
-
-      res.json({ success: true, matches });
+      } else {
+        res.json({
+          success: true,
+          errors: [],
+          warnings: [],
+          message: "Linting completed successfully",
+          stdout,
+        });
+      }
     });
   } catch (error) {
-    res.json({ success: false, error: error.message });
+    res.json({
+      success: false,
+      error: error.message,
+      message: "Failed to run linter - linting may not be configured",
+    });
   }
 });
 
@@ -189,7 +234,7 @@ app.post("/_container/replace_lines", (req, res) => {
     const fullPath = path.resolve(WORKSPACE_DIR, filePath);
 
     // Read the file
-    const content = fs.readFileSync(fullPath, "utf8");
+    const content = fsSync.readFileSync(fullPath, "utf8");
     const lines = content.split("\n");
 
     // Replace the specified lines (convert to 0-based indexing)
@@ -200,7 +245,7 @@ app.post("/_container/replace_lines", (req, res) => {
     lines.splice(start, end - start, newContent);
 
     // Write back to file
-    fs.writeFileSync(fullPath, lines.join("\n"));
+    fsSync.writeFileSync(fullPath, lines.join("\n"));
 
     res.json({
       success: true,
@@ -223,12 +268,12 @@ app.post("/_container/delete_file", (req, res) => {
     const fullPath = path.resolve(WORKSPACE_DIR, filePath);
 
     // Check if file exists
-    if (!fs.existsSync(fullPath)) {
+    if (!fsSync.existsSync(fullPath)) {
       return res.json({ success: false, error: "File not found" });
     }
 
     // Delete the file
-    fs.unlinkSync(fullPath);
+    fsSync.unlinkSync(fullPath);
 
     res.json({ success: true, message: "File deleted successfully" });
   } catch (error) {
@@ -320,7 +365,7 @@ app.get("/_container/logs/stream", (req, res) => {
   let userAppLogProcess = null;
 
   // Check if log file exists and start tailing it
-  if (fs.existsSync(userAppLogFile)) {
+  if (fsSync.existsSync(userAppLogFile)) {
     userAppLogProcess = spawn("tail", ["-f", userAppLogFile]);
 
     userAppLogProcess.stdout.on("data", (data) => {
@@ -442,6 +487,9 @@ app.get("/_container/poll", async (req, res) => {
             break;
           case "getBuildErrors":
             result = await getBuildErrors();
+            break;
+          case "runLinter":
+            result = await runLinter();
             break;
           default:
             result = {
@@ -591,5 +639,319 @@ async function writeFile(path, content) {
   } catch (error) {
     console.error(`[Container API] writeFile error:`, error);
     return { success: false, error: error.message, path };
+  }
+}
+
+// Replace text in a file (text-based replacement)
+async function replaceLines(path, query, replacement) {
+  console.log(
+    `[Container API] replaceLines called with path: ${path}, query length: ${query.length}, replacement length: ${replacement.length}`
+  );
+  try {
+    // Read the file
+    const content = await fs.readFile(path, "utf8");
+    const originalLength = content.length;
+
+    // Check if the query text exists in the file
+    if (!content.includes(query)) {
+      return {
+        success: false,
+        path,
+        message: `Query text not found in file. The exact text to replace was not found.`,
+        error: "Text not found",
+        suggestion:
+          "Use read_file tool to examine the file and see its current content, then try again with the correct text.",
+      };
+    }
+
+    // Replace the text
+    const newContent = content.replace(query, replacement);
+    const newLength = newContent.length;
+
+    // Write the modified content back to the file
+    await fs.writeFile(path, newContent, "utf8");
+
+    console.log(
+      `[Container API] replaceLines successfully replaced text in ${path} (${originalLength} → ${newLength} chars)`
+    );
+
+    return {
+      success: true,
+      path,
+      message: `Successfully replaced text in ${path}`,
+      originalLength,
+      newLength,
+    };
+  } catch (error) {
+    console.error(`[Container API] replaceLines error:`, error);
+    return { success: false, error: error.message, path };
+  }
+}
+
+// Search for files containing text
+async function searchFiles(pattern, files = []) {
+  console.log(`[Container API] searchFiles called with pattern: ${pattern}`);
+  try {
+    const matches = [];
+    const patternLower = pattern.toLowerCase(); // Make search case-insensitive
+
+    // If no specific files provided, search in current directory
+    const searchPaths = files.length > 0 ? files : ["."];
+
+    for (const searchPath of searchPaths) {
+      const fullPath = path.join(WORKSPACE_DIR, searchPath);
+
+      if (fsSync.statSync(fullPath).isFile()) {
+        // Search in single file
+        const content = await fs.readFile(fullPath, "utf8");
+        if (content.toLowerCase().includes(patternLower)) {
+          matches.push({
+            file: searchPath,
+            matches: content
+              .split("\n")
+              .map((line, index) => ({
+                line: index + 1,
+                content: line,
+              }))
+              .filter((line) =>
+                line.content.toLowerCase().includes(patternLower)
+              ),
+          });
+        }
+      } else {
+        // Search in directory recursively
+        const searchInDirectory = async (dirPath) => {
+          const items = await fs.readdir(dirPath, { withFileTypes: true });
+
+          for (const item of items) {
+            const itemPath = path.join(dirPath, item.name);
+            const relativePath = path.relative(WORKSPACE_DIR, itemPath);
+
+            if (item.isDirectory()) {
+              await searchInDirectory(itemPath);
+            } else if (item.isFile()) {
+              try {
+                const content = await fs.readFile(itemPath, "utf8");
+                if (content.toLowerCase().includes(patternLower)) {
+                  matches.push({
+                    file: relativePath,
+                    matches: content
+                      .split("\n")
+                      .map((line, index) => ({
+                        line: index + 1,
+                        content: line,
+                      }))
+                      .filter((line) =>
+                        line.content.toLowerCase().includes(patternLower)
+                      ),
+                  });
+                }
+              } catch (error) {
+                console.warn(
+                  `[Container API] Could not read file ${itemPath}:`,
+                  error.message
+                );
+              }
+            }
+          }
+        };
+
+        await searchInDirectory(fullPath);
+      }
+    }
+
+    console.log(
+      `[Container API] searchFiles found ${matches.length} files with matches`
+    );
+    return { success: true, matches };
+  } catch (error) {
+    console.error(`[Container API] searchFiles error:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Delete a file
+async function deleteFile(filePath) {
+  console.log(`[Container API] deleteFile called with path: ${filePath}`);
+  try {
+    const fullPath = path.join(WORKSPACE_DIR, filePath);
+    await fs.unlink(fullPath);
+    console.log(`[Container API] deleteFile successfully deleted ${filePath}`);
+    return { success: true, path: filePath };
+  } catch (error) {
+    console.error(`[Container API] deleteFile error:`, error);
+    return { success: false, error: error.message, path: filePath };
+  }
+}
+
+// Run a command
+async function runCommand(command, args = []) {
+  console.log(
+    `[Container API] runCommand called with: ${command} ${args.join(" ")}`
+  );
+  try {
+    return new Promise((resolve) => {
+      const fullCommand = `${command} ${args.join(" ")}`;
+      exec(fullCommand, { cwd: WORKSPACE_DIR }, (error, stdout, stderr) => {
+        if (error) {
+          console.error(`[Container API] runCommand error:`, error);
+          resolve({
+            success: false,
+            error: error.message,
+            stdout: stdout || "",
+            stderr: stderr || "",
+            exitCode: error.code,
+          });
+        } else {
+          console.log(`[Container API] runCommand completed successfully`);
+          resolve({
+            success: true,
+            stdout: stdout || "",
+            stderr: stderr || "",
+            exitCode: 0,
+          });
+        }
+      });
+    });
+  } catch (error) {
+    console.error(`[Container API] runCommand error:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Restart the development server
+async function restartServer() {
+  console.log(`[Container API] restartServer called`);
+  try {
+    // Kill any existing npm processes
+    await runCommand("pkill", ["-f", "npm"]);
+
+    // Wait a moment for processes to terminate
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // Start the development server
+    const result = await runCommand("npm", ["run", "dev"]);
+
+    console.log(`[Container API] restartServer completed`);
+    return { success: true, message: "Server restarted successfully" };
+  } catch (error) {
+    console.error(`[Container API] restartServer error:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Check the status of the development server
+async function checkStatus() {
+  console.log(`[Container API] checkStatus called`);
+  try {
+    // Check if npm process is running
+    const result = await runCommand("pgrep", ["-f", "npm"]);
+
+    if (result.success && result.stdout.trim()) {
+      return {
+        success: true,
+        status: "running",
+        message: "Development server is running",
+      };
+    } else {
+      return {
+        success: true,
+        status: "stopped",
+        message: "Development server is not running",
+      };
+    }
+  } catch (error) {
+    console.error(`[Container API] checkStatus error:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Get build errors from the project
+async function getBuildErrors() {
+  console.log(`[Container API] getBuildErrors called`);
+  try {
+    // Try to run a build to check for errors
+    const result = await runCommand("npm", ["run", "build"]);
+
+    if (result.success) {
+      return {
+        success: true,
+        errors: [],
+        warnings: [],
+        message: "No build errors found",
+      };
+    } else {
+      // Parse stderr for error messages
+      const errorLines = result.stderr
+        .split("\n")
+        .filter(
+          (line) =>
+            line.includes("error") ||
+            line.includes("Error") ||
+            line.includes("ERROR")
+        );
+
+      return {
+        success: false,
+        errors: errorLines,
+        warnings: [],
+        message: `Build failed with ${errorLines.length} errors`,
+        stdout: result.stdout,
+        stderr: result.stderr,
+      };
+    }
+  } catch (error) {
+    console.error(`[Container API] getBuildErrors error:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Run linter on the project
+async function runLinter() {
+  console.log(`[Container API] runLinter called`);
+  try {
+    // Try to run the linter (assuming ESLint is configured)
+    const result = await runCommand("npm", ["run", "lint"]);
+
+    if (result.success) {
+      return {
+        success: true,
+        errors: [],
+        warnings: [],
+        message: "Linting completed successfully",
+        stdout: result.stdout,
+      };
+    } else {
+      // Parse the output for linting errors and warnings
+      const output = result.stdout + result.stderr;
+      const lines = output.split("\n");
+
+      const errors = [];
+      const warnings = [];
+
+      for (const line of lines) {
+        if (line.includes("error") || line.includes("Error")) {
+          errors.push(line.trim());
+        } else if (line.includes("warning") || line.includes("Warning")) {
+          warnings.push(line.trim());
+        }
+      }
+
+      return {
+        success: false,
+        errors,
+        warnings,
+        message: `Linting found ${errors.length} errors and ${warnings.length} warnings`,
+        stdout: result.stdout,
+        stderr: result.stderr,
+      };
+    }
+  } catch (error) {
+    console.error(`[Container API] runLinter error:`, error);
+    return {
+      success: false,
+      error: error.message,
+      message: "Failed to run linter - linting may not be configured",
+    };
   }
 }

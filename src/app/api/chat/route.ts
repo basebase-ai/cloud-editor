@@ -84,6 +84,8 @@ function getToolStartMessage(
       const cmd = (args.command as string | undefined) || "";
       const cmdArgs = (args.args as string[] | undefined) || [];
       return `💻 Running: ${cmd} ${cmdArgs.join(" ")}\n`;
+    case "restart_server":
+      return `🔄 Restarting development server\n`;
     default:
       return `🔄 Running ${toolName}\n`;
   }
@@ -176,6 +178,11 @@ function getToolResultMessage(
       } else {
         return `❌ Command failed: ${commandName} (exit code: ${exitCode})\n`;
       }
+    case "restart_server":
+      const restartSuccess = result.success as boolean | undefined;
+      return restartSuccess
+        ? `✓ Development server restarted successfully\n`
+        : `❌ Failed to restart development server\n`;
     default:
       return `✓ ${toolName} completed\n`;
   }
@@ -638,6 +645,34 @@ const runCommandTool = tool({
   },
 });
 
+const restartServerTool = tool({
+  description:
+    "Restart the development server. This kills any existing npm processes and starts a fresh development server.",
+  inputSchema: z.object({}),
+  execute: async () => {
+    console.log(`[Tool] restart_server called`);
+    try {
+      const result = await callContainer("restartServer", {});
+      console.log(`[Tool] restart_server result:`, result);
+      return {
+        success: result.success,
+        message: result.message,
+        type: "restart_server",
+      };
+    } catch (error) {
+      console.error(`[Tool] restart_server error:`, error);
+      return {
+        success: false,
+        message: `❌ Failed to restart server: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`,
+        type: "restart_server",
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  },
+});
+
 const replaceLinesTool = tool({
   description:
     "Replace multi-line text blocks in a file with new content. More efficient than rewriting entire files when making targeted changes. IMPORTANT: If this fails, you should read the file first to understand its current state before trying again.",
@@ -876,6 +911,11 @@ export async function POST(req: Request) {
         "replace_lines",
         statusEmitter
       ),
+      restart_server: wrapToolWithStatus(
+        restartServerTool,
+        "restart_server",
+        statusEmitter
+      ),
     };
 
     console.log(`[Chat API] Enhanced tools created, starting streamText...`);
@@ -918,6 +958,7 @@ You can help users with their code by:
 8. Running linting to check code quality using run_linter
 9. Checking WebContainer status and debugging with check_status
 10. Checking for build errors using check_build_errors (IMPORTANT: use this after making file changes)
+11. Restarting the development server using restart_server when needed
 
 When working with files:
 - Use write_file to create new files or completely replace the contents of existing files
@@ -928,7 +969,7 @@ When working with files:
 When working with commands:
 - Use run_command to execute any Linux command in the WebContainer environment
 - Examples: run_command("npm", ["install", "package-name"]), run_command("ls", ["-la"]), run_command("git", ["status"])
-- To restart dev server: run_command("pkill", ["-f", "npm"]) then run_command("npm", ["run", "dev"])
+- To restart dev server: use restart_server (preferred) or run_command("pkill", ["-f", "npm"]) then run_command("npm", ["run", "dev"])
 - To install packages: run_command("npm", ["install", "package-name"])
 - To run tests: run_command("npm", ["test"])
 - The command will return exit code, output, and success status
