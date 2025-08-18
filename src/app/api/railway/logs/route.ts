@@ -8,6 +8,11 @@ interface LogEntry {
   level: string;
 }
 
+interface RailwayLog {
+  timestamp: string;
+  message: string;
+}
+
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const { searchParams } = new URL(request.url);
@@ -24,8 +29,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Get Railway token from server environment
     const railwayToken = process.env.RAILWAY_TOKEN;
 
-    if (!serviceId) {
-      console.error(`[Railway Logs API] Missing serviceId parameter`);
+    if (!deploymentId) {
+      console.error(`[Railway Logs API] Missing deploymentId parameter`);
       return NextResponse.json(
         { error: "Missing required query parameters" },
         { status: 400 }
@@ -42,29 +47,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Use a simpler query that's more likely to work
+    // Use the correct deploymentLogs query
     const logsQuery = `
-      query ServiceInfo($serviceId: String!) {
-        service(id: $serviceId) {
-          id
-          name
-          status
-          deployments(first: 1) {
-            edges {
-              node {
-                id
-                status
-                logs(first: $limit) {
-                  edges {
-                    node {
-                      timestamp
-                      message
-                    }
-                  }
-                }
-              }
-            }
-          }
+      query DeploymentLogs($deploymentId: String!, $limit: Int!) {
+        deploymentLogs(deploymentId: $deploymentId, limit: $limit) {
+          timestamp
+          message
         }
       }
     `;
@@ -80,7 +68,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       body: JSON.stringify({
         query: logsQuery,
         variables: {
-          serviceId: serviceId,
+          deploymentId: deploymentId,
           limit: parseInt(limit, 10),
         },
       }),
@@ -117,20 +105,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Extract logs from the nested structure
-    const deployments = data.data?.service?.deployments?.edges || [];
-    const logs: LogEntry[] = [];
-
-    for (const deployment of deployments) {
-      const deploymentLogs = deployment.node?.logs?.edges || [];
-      for (const logEdge of deploymentLogs) {
-        logs.push({
-          timestamp: logEdge.node.timestamp,
-          message: logEdge.node.message,
-          level: "info",
-        });
-      }
-    }
+    // Extract logs from the direct deploymentLogs query
+    const logs: LogEntry[] = (data.data?.deploymentLogs || []).map(
+      (log: RailwayLog) => ({
+        timestamp: log.timestamp,
+        message: log.message,
+        level: "info",
+      })
+    );
 
     console.log(
       `[Railway Logs API] Retrieved ${logs.length} logs from Railway`
@@ -210,25 +192,12 @@ export async function POST(request: NextRequest): Promise<Response> {
         // Set up log polling
         const pollLogs = async () => {
           try {
-            // Use a simpler query that's more likely to work
+            // Use the correct deploymentLogs query for streaming
             const logsQuery = `
-              query ServiceLogs($serviceId: String!, $limit: Int!) {
-                service(id: $serviceId) {
-                  deployments(first: 1) {
-                    edges {
-                      node {
-                        id
-                        logs(first: $limit) {
-                          edges {
-                            node {
-                              timestamp
-                              message
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
+              query DeploymentLogs($deploymentId: String!, $limit: Int!) {
+                deploymentLogs(deploymentId: $deploymentId, limit: $limit) {
+                  timestamp
+                  message
                 }
               }
             `;
@@ -244,7 +213,7 @@ export async function POST(request: NextRequest): Promise<Response> {
               body: JSON.stringify({
                 query: logsQuery,
                 variables: {
-                  serviceId: serviceId,
+                  deploymentId: deploymentId,
                   limit: 20, // Get latest 20 logs
                 },
               }),
@@ -266,15 +235,7 @@ export async function POST(request: NextRequest): Promise<Response> {
                 return;
               }
 
-              const deployments = data.data?.service?.deployments?.edges || [];
-              const logs: Array<{ timestamp: string; message: string }> = [];
-
-              for (const deployment of deployments) {
-                const deploymentLogs = deployment.node?.logs?.edges || [];
-                for (const logEdge of deploymentLogs) {
-                  logs.push(logEdge.node);
-                }
-              }
+              const logs: RailwayLog[] = data.data?.deploymentLogs || [];
 
               console.log(
                 `[Railway Logs API] Polled ${logs.length} logs from Railway`

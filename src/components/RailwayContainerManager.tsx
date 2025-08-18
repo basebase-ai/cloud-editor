@@ -214,7 +214,7 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
       setIsDeploying(true);
       setIsLoading(true);
       setError('');
-                setStatus('Deploying container to Railway... This may take up to 30 seconds.');
+                setStatus('Creating a test deployment in the cloud - this can take up to 30 seconds.');
 
       // Extract project ID from repo URL
       const repoMatch = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);

@@ -69,8 +69,8 @@ class CloudEditorTest {
     this.log(`Container deployed: ${this.containerUrl}`, "success");
 
     // Wait a bit for container to start
-    this.log("Waiting 30 seconds for container to start...", "info");
-    await new Promise((resolve) => setTimeout(resolve, 30000));
+    this.log("Waiting 15 seconds for container to start...", "info");
+    await new Promise((resolve) => setTimeout(resolve, 15000));
   }
 
   async testAppServing() {
@@ -105,7 +105,7 @@ class CloudEditorTest {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         action: "listFiles",
-        path: ".",
+        params: { path: "." },
         containerUrl: this.containerUrl,
       }),
     });
@@ -127,7 +127,7 @@ class CloudEditorTest {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         action: "readFile",
-        path: "package.json",
+        params: { path: "package.json" },
         containerUrl: this.containerUrl,
       }),
     });
@@ -142,11 +142,206 @@ class CloudEditorTest {
     }
 
     const packageJson = JSON.parse(readResult.content);
-    if (packageJson.name !== "nextjs-starter") {
+    const allowedNames = ["nextjs-starter", "mantine-minimal-next-template"];
+    if (!allowedNames.includes(packageJson.name)) {
       throw new Error(`Unexpected package name: ${packageJson.name}`);
     }
 
-    this.log("Container API working correctly", "success");
+    this.log("Basic file tools working", "success");
+
+    // Test 3: Write a temp file
+    const tmpFilePath = "tmp/e2e-tool-test.txt";
+    const initialContent = ["alpha", "beta", "gamma"].join("\n");
+    const writeResp = await fetch(`${BASE_URL}/api/container`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "writeFile",
+        params: { path: tmpFilePath, content: initialContent },
+        containerUrl: this.containerUrl,
+      }),
+    });
+    if (!writeResp.ok)
+      throw new Error(`Write file failed: ${writeResp.status}`);
+    const writeResult = await writeResp.json();
+    if (!writeResult.success)
+      throw new Error(`Write file failed: ${writeResult.error}`);
+    this.log(`Wrote ${tmpFilePath}`, "success");
+
+    // Test 4: Read the temp file back
+    const readTmpResp = await fetch(`${BASE_URL}/api/container`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "readFile",
+        params: { path: tmpFilePath },
+        containerUrl: this.containerUrl,
+      }),
+    });
+    if (!readTmpResp.ok)
+      throw new Error(`Read tmp file failed: ${readTmpResp.status}`);
+    const readTmpResult = await readTmpResp.json();
+    if (!readTmpResult.success)
+      throw new Error(`Read tmp file failed: ${readTmpResult.error}`);
+    if (readTmpResult.content !== initialContent)
+      throw new Error("Temp file content mismatch");
+    this.log(`Verified ${tmpFilePath} content`, "success");
+
+    // Test 5: Replace a line in the temp file (line 2 -> REPLACED)
+    const replaceResp = await fetch(`${BASE_URL}/api/container`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "replaceLines",
+        params: {
+          path: tmpFilePath,
+          startLine: 2,
+          endLine: 2,
+          newContent: "REPLACED",
+        },
+        containerUrl: this.containerUrl,
+      }),
+    });
+    if (!replaceResp.ok)
+      throw new Error(`Replace lines failed: ${replaceResp.status}`);
+    const replaceResult = await replaceResp.json();
+    if (!replaceResult.success)
+      throw new Error(`Replace lines failed: ${replaceResult.error}`);
+
+    // Verify replacement
+    const readAfterReplaceResp = await fetch(`${BASE_URL}/api/container`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "readFile",
+        params: { path: tmpFilePath },
+        containerUrl: this.containerUrl,
+      }),
+    });
+    const readAfterReplace = await readAfterReplaceResp.json();
+    if (!readAfterReplace.success)
+      throw new Error(`Read after replace failed: ${readAfterReplace.error}`);
+    const expectedContent = ["alpha", "REPLACED", "gamma"].join("\n");
+    if (readAfterReplace.content !== expectedContent)
+      throw new Error("Replace lines did not apply correctly");
+    this.log(`Replaced content verified for ${tmpFilePath}`, "success");
+
+    // Test 6: Search for the new text in tmp directory
+    const searchResp = await fetch(`${BASE_URL}/api/container`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "searchFiles",
+        params: { pattern: "REPLACED", path: "tmp" },
+        containerUrl: this.containerUrl,
+      }),
+    });
+    if (!searchResp.ok)
+      throw new Error(`Search files failed: ${searchResp.status}`);
+    const searchResult = await searchResp.json();
+    if (!searchResult.success)
+      throw new Error(`Search files failed: ${searchResult.error}`);
+    const foundMatch = (searchResult.matches || []).some(
+      (m) => m.file === tmpFilePath
+    );
+    if (!foundMatch) throw new Error("Search did not find the updated file");
+    this.log(`Search found ${tmpFilePath}`, "success");
+
+    // Test 7: Run a simple command
+    const cmdResp = await fetch(`${BASE_URL}/api/container`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "runCommand",
+        params: { command: "echo CI_E2E_OK", cwd: "." },
+        containerUrl: this.containerUrl,
+      }),
+    });
+    if (!cmdResp.ok) throw new Error(`Run command failed: ${cmdResp.status}`);
+    const cmdResult = await cmdResp.json();
+    if (
+      !cmdResult.success ||
+      !String(cmdResult.stdout || "").includes("CI_E2E_OK")
+    ) {
+      throw new Error(`Run command did not return expected output`);
+    }
+    this.log(`runCommand succeeded`, "success");
+
+    // Test 8: Run linter (accept success true/false, just ensure response shape)
+    const lintResp = await fetch(`${BASE_URL}/api/container`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "runLinter",
+        params: { files: "all" },
+        containerUrl: this.containerUrl,
+      }),
+    });
+    if (!lintResp.ok) throw new Error(`Run linter failed: ${lintResp.status}`);
+    const lintResult = await lintResp.json();
+    if (typeof lintResult.success !== "boolean")
+      throw new Error("Linter response missing success boolean");
+    this.log(`runLinter responded (success=${lintResult.success})`, "success");
+
+    // Test 9: Delete the temp file
+    const delResp = await fetch(`${BASE_URL}/api/container`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "deleteFile",
+        params: { path: tmpFilePath },
+        containerUrl: this.containerUrl,
+      }),
+    });
+    if (!delResp.ok) throw new Error(`Delete file failed: ${delResp.status}`);
+    const delResult = await delResp.json();
+    if (!delResult.success)
+      throw new Error(`Delete file failed: ${delResult.error}`);
+
+    // Verify deletion by listing tmp directory
+    const listTmpResp = await fetch(`${BASE_URL}/api/container`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "listFiles",
+        params: { path: "tmp" },
+        containerUrl: this.containerUrl,
+      }),
+    });
+    const listTmp = await listTmpResp.json();
+    if (!listTmp.success) throw new Error(`List tmp failed: ${listTmp.error}`);
+    const stillExists = (listTmp.files || []).some(
+      (f) => f.name === "e2e-tool-test.txt"
+    );
+    if (stillExists) throw new Error("Temp file still exists after delete");
+    this.log(`Deleted ${tmpFilePath}`, "success");
+
+    // Test 10: Restart server (do last)
+    const restartResp = await fetch(`${BASE_URL}/api/container`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "restartServer",
+        params: {},
+        containerUrl: this.containerUrl,
+      }),
+    });
+    if (!restartResp.ok)
+      throw new Error(`Restart server failed: ${restartResp.status}`);
+    const restartResult = await restartResp.json();
+    if (!restartResult.success)
+      throw new Error(`Restart server failed: ${restartResult.error}`);
+    this.log(`Restart initiated, waiting 5s...`, "info");
+    await new Promise((r) => setTimeout(r, 5000));
+
+    // Verify app is back up
+    const ping = await fetch(this.containerUrl, {
+      timeout: 10000,
+      headers: { "User-Agent": "CloudEditor-Test/1.0" },
+    });
+    if (!ping.ok)
+      throw new Error(`App not serving after restart: ${ping.status}`);
+    this.log("All container tools verified", "success");
   }
 
   async testLogStreaming() {
@@ -154,12 +349,20 @@ class CloudEditorTest {
 
     return new Promise((resolve, reject) => {
       let logCount = 0;
+      let reader = null;
 
       const timeout = setTimeout(() => {
         if (logCount > 0) {
           this.log(`Received ${logCount} logs`, "success");
+          // Close the reader before resolving
+          if (reader) {
+            reader.cancel();
+          }
           resolve();
         } else {
+          if (reader) {
+            reader.cancel();
+          }
           reject(new Error("No logs received"));
         }
       }, 10000); // 10 second timeout
@@ -177,7 +380,7 @@ class CloudEditorTest {
             throw new Error(`Log streaming failed: ${response.status}`);
           }
 
-          const reader = response.body.getReader();
+          reader = response.body.getReader();
           const decoder = new TextDecoder();
 
           const readStream = async () => {
