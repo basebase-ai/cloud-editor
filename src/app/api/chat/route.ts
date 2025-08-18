@@ -3,6 +3,9 @@ import { streamText, tool, stepCountIs } from "ai";
 import { headers } from "next/headers";
 import { z } from "zod";
 
+// Global variable to store container URL for the current request
+let currentContainerUrl: string | null = null;
+
 // Types for tool status events
 interface ToolStartEvent {
   toolName: string;
@@ -57,6 +60,10 @@ function getToolStartMessage(
       return `📝 Writing to ${writePath}\n`;
     case "grep_files":
       const pattern = (args.pattern as string | undefined) || "";
+      console.log(`[Status Message] grep_files args:`, args);
+      console.log(
+        `[Status Message] grep_files pattern extracted: "${pattern}"`
+      );
       return `🔎 Searching for '${pattern}'\n`;
     case "run_linter":
       return `🔧 Running linter\n`;
@@ -200,10 +207,18 @@ function wrapToolWithStatus(
   return {
     ...tool,
     execute: async (...args: unknown[]) => {
+      console.log(`[Tool Wrapper] ${toolName} called with args:`, args);
+      console.log(`[Tool Wrapper] ${toolName} args[0]:`, args[0]);
+
       // Extract the first argument which should contain the parameters
       const params = args[0] as Record<string, unknown>;
+      console.log(`[Tool Wrapper] ${toolName} extracted params:`, params);
 
       // Emit start status
+      console.log(`[Tool Wrapper] ${toolName} emitting toolStart with:`, {
+        toolName,
+        args: params,
+      });
       statusEmitter.emit("toolStart", { toolName, args: params });
 
       try {
@@ -269,7 +284,11 @@ async function callContainer(
     const response = await fetch(`${baseUrl}/api/container`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, params }),
+      body: JSON.stringify({
+        action,
+        params,
+        containerUrl: currentContainerUrl,
+      }),
       // Add timeout to prevent hanging
       signal: AbortSignal.timeout(30000), // 30 second timeout
     });
@@ -451,16 +470,39 @@ const grepFilesTool = tool({
   }),
   execute: async ({ pattern, files = "*" }) => {
     console.log(
-      `[Tool] grep_files called with pattern: ${pattern}, files: ${files}`
+      `[Tool] grep_files called with pattern: "${pattern}" (type: ${typeof pattern}), files: "${files}"`
     );
+    console.log(`[Tool] grep_files full args:`, { pattern, files });
     try {
       const result = await callContainer("searchFiles", { pattern, files });
-      console.log(`[Tool] grep_files result:`, result);
+      console.log(`[Tool] grep_files raw result from container:`, result);
+
+      // Check if the result indicates a failure
+      if (!result.success || result.error) {
+        console.log(`[Tool] grep_files failed:`, result.error);
+        return {
+          results: [],
+          pattern,
+          filesSearched: files,
+          type: "grep_files",
+          error: result.error || "Unknown error",
+          message: result.message || "Failed to search files",
+        };
+      }
+
+      // The container API returns 'matches', not 'results'
+      const matches = (result.matches as Array<unknown>) || [];
+      console.log(
+        `[Tool] grep_files found ${matches.length} matches:`,
+        matches
+      );
+
       return {
-        results: result.results,
-        pattern: result.pattern,
-        filesSearched: result.filesSearched,
+        results: matches,
+        pattern,
+        filesSearched: files,
         type: "grep_files",
+        matchCount: matches.length,
       };
     } catch (error) {
       console.error(`[Tool] grep_files error:`, error);
@@ -731,10 +773,14 @@ const replaceLinesTool = tool({
 
 export async function POST(req: Request) {
   try {
-    const { messages } = await req.json();
+    const { messages, containerUrl } = await req.json();
+
+    // Set the global container URL for this request
+    currentContainerUrl = containerUrl || null;
 
     console.log(`[Chat API] ===== NEW CHAT REQUEST =====`);
     console.log(`[Chat API] Request received with ${messages.length} messages`);
+    console.log(`[Chat API] Container URL: ${containerUrl || "none"}`);
     console.log(
       `[Chat API] Last user message:`,
       messages[messages.length - 1]?.content?.substring(0, 100) + "..."

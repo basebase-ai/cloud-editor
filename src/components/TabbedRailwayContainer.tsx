@@ -8,7 +8,7 @@ interface TabbedRailwayContainerProps {
   repoUrl: string;
   githubToken: string;
   userId?: string;
-  onDevServerReady?: () => void;
+  onDevServerReady?: (deploymentUrl?: string) => void;
   containerRef: React.RefObject<RailwayContainerManagerRef | null>;
 }
 

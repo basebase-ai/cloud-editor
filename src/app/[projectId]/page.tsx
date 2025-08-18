@@ -28,6 +28,7 @@ export default function ProjectPage() {
   const [showTokenModal, setShowTokenModal] = useState<boolean>(false);
   const [showCommitModal, setShowCommitModal] = useState<boolean>(false);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [containerUrl, setContainerUrl] = useState<string | null>(null);
   const hasShownWelcomeMessageRef = useRef<boolean>(false);
 
   // Debug logging for state changes
@@ -103,8 +104,11 @@ export default function ProjectPage() {
     setShowTokenModal(false);
   };
 
-  const handleDevServerReady = () => {
+  const handleDevServerReady = (deploymentUrl?: string) => {
     console.log('Dev server is ready');
+    if (deploymentUrl) {
+      setContainerUrl(deploymentUrl);
+    }
     if (!hasShownWelcomeMessageRef.current) {
       console.log('Adding welcome message to chat');
       chatRef.current?.addMessage('Hello. How can I help you to improve this app?', 'assistant');
@@ -181,6 +185,7 @@ export default function ProjectPage() {
           onCodeChange={() => setHasChanges(true)}
           repoUrl={repoUrl}
           githubToken={githubToken}
+          containerUrl={containerUrl}
         />
       </AppShell.Aside>
 

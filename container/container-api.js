@@ -7,7 +7,7 @@ const { exec } = require("child_process");
 const { createProxyMiddleware } = require("http-proxy-middleware");
 // Use built-in fetch (available in Node.js 18+) or fallback to node-fetch
 let fetch;
-if (typeof globalThis.fetch === 'function') {
+if (typeof globalThis.fetch === "function") {
   fetch = globalThis.fetch;
 } else {
   // Fallback for older Node.js versions
@@ -224,17 +224,29 @@ app.post("/_container/search_files", async (req, res) => {
   try {
     const { pattern, path: searchPath = "." } = req.body;
 
+    console.log(
+      `[Container API] search_files endpoint received body:`,
+      req.body
+    );
+
     if (!pattern) {
+      console.log(
+        `[Container API] search_files endpoint error: no pattern provided`
+      );
       return res.json({ success: false, error: "Pattern is required" });
     }
 
     console.log(
-      `[Container API] search_files endpoint called with pattern: ${pattern}, path: ${searchPath}`
+      `[Container API] search_files endpoint called with pattern: "${pattern}", path: "${searchPath}"`
     );
 
     // Use the async searchFiles function for content-based search
     const result = await searchFiles(pattern, [searchPath]);
 
+    console.log(
+      `[Container API] search_files endpoint returning result:`,
+      result
+    );
     res.json(result);
   } catch (error) {
     console.error(`[Container API] search_files endpoint error:`, error);
@@ -417,11 +429,15 @@ app.get("/_container/logs/stream", (req, res) => {
   });
 
   // Send connection message
-  res.write('data: {"type":"connected","message":"Container log stream connected"}\n\n');
+  res.write(
+    'data: {"type":"connected","message":"Container log stream connected"}\n\n'
+  );
 
   // Send recent container API logs
   const recentLogs = logBuffer.slice(-20);
-  console.log(`[Container API] Sending ${recentLogs.length} recent logs to client`);
+  console.log(
+    `[Container API] Sending ${recentLogs.length} recent logs to client`
+  );
   recentLogs.forEach((log) => {
     res.write(`data: ${JSON.stringify(log)}\n\n`);
   });
@@ -432,7 +448,9 @@ app.get("/_container/logs/stream", (req, res) => {
   const containerLogInterval = setInterval(() => {
     if (logBuffer.length > lastSentIndex) {
       const newLogs = logBuffer.slice(lastSentIndex);
-      console.log(`[Container API] Streaming ${newLogs.length} new logs to client`);
+      console.log(
+        `[Container API] Streaming ${newLogs.length} new logs to client`
+      );
       newLogs.forEach((log) => {
         res.write(`data: ${JSON.stringify(log)}\n\n`);
       });
@@ -446,7 +464,9 @@ app.get("/_container/logs/stream", (req, res) => {
 
   // Check if log file exists and start tailing it
   if (fsSync.existsSync(userAppLogFile)) {
-    console.log(`[Container API] Starting to tail user app log file: ${userAppLogFile}`);
+    console.log(
+      `[Container API] Starting to tail user app log file: ${userAppLogFile}`
+    );
     userAppLogProcess = spawn("tail", ["-f", userAppLogFile]);
 
     userAppLogProcess.stdout.on("data", (data) => {
@@ -470,12 +490,16 @@ app.get("/_container/logs/stream", (req, res) => {
       console.error(`[Container API] Tail process error: ${data}`);
     });
   } else {
-    console.log(`[Container API] User app log file not found: ${userAppLogFile}`);
-    res.write(`data: ${JSON.stringify({
-      type: "info",
-      timestamp: new Date().toISOString(),
-      message: `User app log file not found: ${userAppLogFile}`,
-    })}\n\n`);
+    console.log(
+      `[Container API] User app log file not found: ${userAppLogFile}`
+    );
+    res.write(
+      `data: ${JSON.stringify({
+        type: "info",
+        timestamp: new Date().toISOString(),
+        message: `User app log file not found: ${userAppLogFile}`,
+      })}\n\n`
+    );
   }
 
   // Also stream system logs (Next.js, npm, etc.)
@@ -483,7 +507,9 @@ app.get("/_container/logs/stream", (req, res) => {
   let systemLogProcess = null;
 
   if (fsSync.existsSync(systemLogFile)) {
-    console.log(`[Container API] Starting to tail system log file: ${systemLogFile}`);
+    console.log(
+      `[Container API] Starting to tail system log file: ${systemLogFile}`
+    );
     systemLogProcess = spawn("tail", ["-f", systemLogFile]);
 
     systemLogProcess.stdout.on("data", (data) => {
@@ -506,11 +532,13 @@ app.get("/_container/logs/stream", (req, res) => {
 
   // Heartbeat
   const heartbeat = setInterval(() => {
-    res.write(`data: ${JSON.stringify({ 
-      type: "heartbeat",
-      timestamp: new Date().toISOString(),
-      message: "Container log stream heartbeat"
-    })}\n\n`);
+    res.write(
+      `data: ${JSON.stringify({
+        type: "heartbeat",
+        timestamp: new Date().toISOString(),
+        message: "Container log stream heartbeat",
+      })}\n\n`
+    );
   }, 30000);
 
   // Clean up on disconnect
@@ -813,20 +841,118 @@ async function replaceLines(path, query, replacement) {
   }
 }
 
+// Helper function to check if a file should be ignored based on .gitignore patterns
+function shouldIgnoreFile(filePath, gitignorePatterns) {
+  const relativePath = filePath.replace(/^\.\//, "");
+
+  for (const pattern of gitignorePatterns) {
+    // Handle directory patterns (ending with /)
+    if (pattern.endsWith("/")) {
+      const dirPattern = pattern.slice(0, -1);
+      if (
+        relativePath.startsWith(dirPattern + "/") ||
+        relativePath === dirPattern
+      ) {
+        return true;
+      }
+    }
+    // Handle file patterns
+    else if (relativePath.includes(pattern) || relativePath.endsWith(pattern)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Load .gitignore patterns
+async function loadGitignorePatterns() {
+  try {
+    const gitignorePath = path.join(WORKSPACE_DIR, ".gitignore");
+    const content = await fs.readFile(gitignorePath, "utf8");
+    const patterns = content
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#"));
+
+    // Add common patterns that should always be ignored
+    const commonPatterns = [
+      ".next",
+      "node_modules",
+      ".git",
+      "dist",
+      "build",
+      ".env",
+      ".env.local",
+      ".env.production",
+      "coverage",
+      ".nyc_output",
+      ".DS_Store",
+      "*.log",
+    ];
+
+    return [...patterns, ...commonPatterns];
+  } catch (error) {
+    console.log("[Container API] No .gitignore found, using default patterns");
+    // Return common patterns even if .gitignore doesn't exist
+    return [
+      ".next",
+      "node_modules",
+      ".git",
+      "dist",
+      "build",
+      ".env",
+      ".env.local",
+      ".env.production",
+      "coverage",
+      ".nyc_output",
+      ".DS_Store",
+      "*.log",
+    ];
+  }
+}
+
 // Search for files containing text
 async function searchFiles(pattern, files = []) {
-  console.log(`[Container API] searchFiles called with pattern: ${pattern}`);
+  console.log(
+    `[Container API] searchFiles called with pattern: "${pattern}", files:`,
+    files
+  );
   try {
+    // If pattern is empty or whitespace-only, return no results
+    if (!pattern || pattern.trim() === "") {
+      console.log(
+        `[Container API] searchFiles: empty pattern provided, returning 0 results`
+      );
+      return { success: true, matches: [] };
+    }
+
+    // Load .gitignore patterns
+    const gitignorePatterns = await loadGitignorePatterns();
+    console.log(`[Container API] Using gitignore patterns:`, gitignorePatterns);
+
     const matches = [];
     const patternLower = pattern.toLowerCase(); // Make search case-insensitive
+    console.log(
+      `[Container API] searchFiles using case-insensitive pattern: "${patternLower}"`
+    );
 
     // If no specific files provided, search in current directory
     const searchPaths = files.length > 0 ? files : ["."];
+    console.log(
+      `[Container API] searchFiles will search in paths:`,
+      searchPaths
+    );
 
     for (const searchPath of searchPaths) {
       const fullPath = path.join(WORKSPACE_DIR, searchPath);
 
       if (fsSync.statSync(fullPath).isFile()) {
+        // Check if file should be ignored
+        if (shouldIgnoreFile(searchPath, gitignorePatterns)) {
+          console.log(`[Container API] Ignoring file: ${searchPath}`);
+          continue;
+        }
+
         // Search in single file
         const content = await fs.readFile(fullPath, "utf8");
         if (content.toLowerCase().includes(patternLower)) {
@@ -853,8 +979,21 @@ async function searchFiles(pattern, files = []) {
             const relativePath = path.relative(WORKSPACE_DIR, itemPath);
 
             if (item.isDirectory()) {
+              // Check if directory should be ignored
+              if (shouldIgnoreFile(relativePath, gitignorePatterns)) {
+                console.log(
+                  `[Container API] Ignoring directory: ${relativePath}`
+                );
+                continue;
+              }
               await searchInDirectory(itemPath);
             } else if (item.isFile()) {
+              // Check if file should be ignored
+              if (shouldIgnoreFile(relativePath, gitignorePatterns)) {
+                console.log(`[Container API] Ignoring file: ${relativePath}`);
+                continue;
+              }
+
               try {
                 const content = await fs.readFile(itemPath, "utf8");
                 if (content.toLowerCase().includes(patternLower)) {
@@ -886,7 +1025,8 @@ async function searchFiles(pattern, files = []) {
     }
 
     console.log(
-      `[Container API] searchFiles found ${matches.length} files with matches`
+      `[Container API] searchFiles found ${matches.length} files with matches:`,
+      matches.map((m) => m.file)
     );
     return { success: true, matches };
   } catch (error) {

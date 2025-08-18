@@ -25,13 +25,14 @@ interface ChatInterfaceProps {
   onCodeChange: () => void;
   repoUrl: string;
   githubToken: string;
+  containerUrl?: string | null;
 }
 
 export interface ChatInterfaceRef {
   addMessage: (content: string, role: 'user' | 'assistant') => void;
 }
 
-const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(({ onCodeChange, repoUrl }, ref) => {
+const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(({ onCodeChange, repoUrl, containerUrl }, ref) => {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [input, setInput] = useState<string>('');
@@ -101,12 +102,13 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(({ onCode
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          messages: [...messages, userMessage].map(msg => ({
-            role: msg.role,
-            content: msg.content
-          }))
-        }),
+                  body: JSON.stringify({
+            messages: [...messages, userMessage].map(msg => ({
+              role: msg.role,
+              content: msg.content
+            })),
+            containerUrl: containerUrl
+          }),
         signal: controller.signal,
       });
 

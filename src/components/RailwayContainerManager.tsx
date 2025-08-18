@@ -12,7 +12,7 @@ interface RailwayContainerManagerProps {
   repoUrl: string;
   githubToken: string;
   userId?: string;
-  onDevServerReady?: () => void;
+  onDevServerReady?: (deploymentUrl?: string) => void;
 }
 
 export interface RailwayContainerManagerRef {
@@ -214,7 +214,7 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
       setIsDeploying(true);
       setIsLoading(true);
       setError('');
-                setStatus('Creating a test deployment in the cloud - this can take up to 30 seconds.');
+                setStatus('Setting up a custom version for you to modify (this can take up to 30 seconds)...');
 
       // Extract project ID from repo URL
       const repoMatch = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);
@@ -248,7 +248,7 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
       console.log(`[RailwayContainerManager] Deployment successful:`, data.deployment);
       
       setDeployment(data.deployment);
-      setStatus('Container is ready!');
+      setStatus('Your custom version is ready!');
       setIsLoading(false);
 
     } catch (err) {
@@ -442,7 +442,7 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
             setStatus('Container ready');
             setIsLoading(false);
             startLogStreaming();
-            onDevServerReady?.();
+            onDevServerReady?.(deployment?.url);
             return;
           } else {
             console.log('Container not ready:', healthResult.details);
@@ -679,7 +679,7 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
                 <Box h="100%" display="flex" style={{ alignItems: 'center', justifyContent: 'center' }}>
                   <Stack align="center" gap="md">
                     <Loader size="lg" />
-                    <Text size="sm" c="dimmed">Container deployed! Starting application...</Text>
+                    <Text size="sm" c="dimmed">Custom version deployed! Starting application...</Text>
                   </Stack>
                 </Box>
               ) : (
