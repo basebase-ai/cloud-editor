@@ -4,7 +4,6 @@ const RAILWAY_API_URL = "https://backboard.railway.app/graphql/v2";
 
 interface DeploymentRequest {
   repoUrl: string;
-  projectId: string;
   userId?: string;
   githubToken?: string;
 }
@@ -129,14 +128,14 @@ async function waitForDeploymentReady(
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     const body = (await request.json()) as DeploymentRequest;
-    const { repoUrl, projectId, userId, githubToken } = body;
+    const { repoUrl, userId, githubToken } = body;
 
     // Get Railway credentials from server environment
     const railwayProjectId = process.env.RAILWAY_PROJECT_ID;
     const railwayEnvironmentId = process.env.RAILWAY_ENVIRONMENT_ID;
     const railwayToken = process.env.RAILWAY_TOKEN;
 
-    if (!repoUrl || !projectId) {
+    if (!repoUrl) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 }
@@ -171,13 +170,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       : "anonymous";
     const serviceName = `${cleanUserId}-${cleanRepoName}`;
 
-    console.log(`Service name: ${userId} + ${projectId} -> ${serviceName}`);
+    console.log(`Service name: ${userId} -> ${serviceName}`);
 
     // Prepare environment variables for the container
     const environmentVariables: Record<string, string> = {
       GITHUB_REPO_URL: repoUrl,
       NODE_ENV: "development",
-      PROJECT_ID: projectId,
+      PROJECT_ID: railwayProjectId,
       // Don't set PORT - let Railway set it automatically for public access
 
       // Configure iframe embedding compatibility
@@ -322,7 +321,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             const deploymentInfo = {
               serviceId: serviceId,
               deploymentId: finalDeploymentStatus.deploymentId || "redeployed",
-              projectId,
+              projectId: railwayProjectId,
               repoUrl,
               status: finalDeploymentStatus.status,
               url: `https://${serviceName}-dev.up.railway.app`,
@@ -581,7 +580,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const deploymentInfo = {
       serviceId,
       deploymentId: finalDeploymentStatus.deploymentId || "deployed",
-      projectId,
+      projectId: railwayProjectId,
       repoUrl,
       status: finalDeploymentStatus.status,
       url: publicUrl,

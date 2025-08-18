@@ -1,0 +1,83 @@
+name: E2E Test Suite
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  e2e-tests:
+    runs-on: ubuntu-latest
+
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BASE_URL: http://localhost:3000
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start development server
+        run: npm run dev &
+
+      - name: Wait for server to start
+        run: |
+          echo "Waiting for server to start..."
+          timeout 60 bash -c 'until curl -f http://localhost:3000/api/health 2>/dev/null; do sleep 2; done'
+
+      - name: Run E2E test suite
+        run: npm run test:e2e
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results
+          path: |
+            test-results/
+            *.log
+          retention-days: 7
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let comment = '## E2E Test Results\n\n';
+
+            try {
+              const results = fs.readFileSync('test-results/summary.json', 'utf8');
+              const data = JSON.parse(results);
+              
+              comment += `✅ **Status**: ${data.passed}/${data.total} tests passed\n`;
+              comment += `⏱️ **Duration**: ${data.duration}ms\n\n`;
+              
+              if (data.failed > 0) {
+                comment += '### Failed Tests:\n';
+                data.failures.forEach(failure => {
+                  comment += `- ❌ ${failure.name}: ${failure.error}\n`;
+                });
+              }
+            } catch (error) {
+              comment += '❌ **Error**: Could not read test results\n';
+            }
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });

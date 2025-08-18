@@ -100,15 +100,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         `[Container API] Request ${requestId} added to pending queue. Total pending: ${pendingRequests.size}`
       );
 
-      // Always try to forward directly to the deployed container
-      const deployedContainerUrl =
-        "https://user-td2yj8-nextjs-starter-dev.up.railway.app";
       console.log(
-        `[Container API] Forwarding request ${requestId} directly to deployed container: ${deployedContainerUrl}`
+        `[Container API] Forwarding request ${requestId} directly to deployed container: ${containerUrl}`
       );
 
       // Update the request with the correct container URL
-      pendingRequest.containerUrl = deployedContainerUrl;
+      pendingRequest.containerUrl = containerUrl;
       forwardToContainer(pendingRequest);
     });
   } catch (error) {
@@ -182,6 +179,10 @@ async function forwardToContainer(request: PendingRequest): Promise<void> {
 
     console.log(`[Container API] Forwarding request to: ${containerApiUrl}`);
     console.log(`[Container API] Request params:`, request.params);
+    console.log(
+      `[Container API] Request body being sent:`,
+      JSON.stringify(request.params)
+    );
 
     const response = await fetch(containerApiUrl, {
       method: "POST",

@@ -42,14 +42,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Use a more reliable query that works with Railway's API
+    // Use a simpler query that's more likely to work
     const logsQuery = `
-      query ServiceLogs($serviceId: String!, $limit: Int!) {
+      query ServiceInfo($serviceId: String!) {
         service(id: $serviceId) {
+          id
+          name
+          status
           deployments(first: 1) {
             edges {
               node {
                 id
+                status
                 logs(first: $limit) {
                   edges {
                     node {
@@ -263,7 +267,7 @@ export async function POST(request: NextRequest): Promise<Response> {
               }
 
               const deployments = data.data?.service?.deployments?.edges || [];
-              const logs: any[] = [];
+              const logs: Array<{ timestamp: string; message: string }> = [];
 
               for (const deployment of deployments) {
                 const deploymentLogs = deployment.node?.logs?.edges || [];

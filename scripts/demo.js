@@ -21,7 +21,7 @@ async function runDemo() {
   console.log("");
 
   // Use a simple, reliable public repository for demo
-  const demoRepo = "https://github.com/vercel/next.js";
+  const demoRepo = "https://github.com/basebase-ai/nextjs-starter";
 
   console.log(`🚀 Testing with repository: ${demoRepo}`);
   console.log("");

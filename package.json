@@ -7,10 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test:container": "node scripts/test-container-creation.js",
-    "test:files": "node scripts/test-file-operations.js",
-    "test:logs": "node scripts/test-log-streaming.js",
-    "test:all": "node scripts/test-runner.js",
+    "test": "node scripts/test-cloud-editor.js",
     "inspect:container": "node scripts/container-inspector.js",
     "demo": "node scripts/demo.js"
   },

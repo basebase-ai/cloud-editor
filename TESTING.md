@@ -1,219 +1,193 @@
-# Railway Container Testing Toolkit
+# Testing Guide
 
-This directory contains a comprehensive testing suite for validating the Railway container functionality piece by piece.
+This document describes the testing strategy for the cloud-editor application.
 
-## 🧪 Test Scripts
+## Test Suite
 
-### 1. Container Creation Test
+### Cloud Editor E2E Test
 
-**Script:** `scripts/test-container-creation.js`  
-**Command:** `npm run test:container <repo-url> [github-token]`
-
-Tests the complete Railway container deployment process:
-
-- ✅ Deploys container using Railway GraphQL API
-- ✅ Polls for deployment status until ready
-- ✅ Validates container URL is accessible
-- ✅ Tests basic container API connectivity
-
-**Example:**
+The comprehensive end-to-end test suite that validates the entire cloud-editor workflow:
 
 ```bash
-npm run test:container https://github.com/vercel/next.js
-npm run test:container https://github.com/user/private-repo gh_token_here
+npm run test
 ```
 
-### 2. File Operations Test
+**What it tests:**
 
-**Script:** `scripts/test-file-operations.js`  
-**Command:** `npm run test:files <project-id>`
+- ✅ Railway container deployment
+- ✅ App serving verification
+- ✅ Container API functionality (file operations)
+- ✅ Log streaming
+- ✅ Automatic cleanup information
 
-Tests all container API file operations:
+**When to run:**
 
-- ✅ `checkStatus` - Container health check
-- ✅ `listFiles` - Directory listing
-- ✅ `readFile` - File content reading
-- ✅ `writeFile` - File creation and writing
-- ✅ `replaceLines` - Line-based file editing
-- ✅ `searchFiles` - File pattern searching
-- ✅ `runCommand` - Shell command execution
-- ✅ `deleteFile` - File deletion
+- After any code changes that affect Railway deployment
+- Before merging to main branch
+- When debugging Railway/deployment issues
 
-**Example:**
+## Development Tools
 
 ```bash
-npm run test:files user-repo
+npm run inspect:container # Inspect running container
+npm run demo              # Run demo script
 ```
 
-### 3. Log Streaming Test
-
-**Script:** `scripts/test-log-streaming.js`  
-**Command:** `npm run test:logs <project-id>`
-
-Tests Railway log streaming functionality:
-
-- ✅ Historical logs retrieval (GET endpoint)
-- ✅ Real-time log streaming (SSE via POST endpoint)
-- ✅ Log parsing and formatting
-- ✅ Stream connection handling
-
-**Example:**
+## Test Commands Summary
 
 ```bash
-npm run test:logs user-repo
+# Main E2E test (recommended)
+npm run test
+
+# Development tools
+npm run inspect:container
+npm run demo
 ```
 
-### 4. Comprehensive Test Runner
+## GitHub Actions Integration
 
-**Script:** `scripts/test-runner.js`  
-**Command:** `npm run test:all <repo-url> [github-token]`
+The cloud-editor E2E test suite runs automatically on:
 
-Runs all tests in sequence with detailed reporting:
+- Push to main/develop branches
+- Pull requests to main branch
+- Manual workflow dispatch
 
-1. **Container Creation** - Deploy and validate container
-2. **File Operations** - Test all API endpoints (10 tests)
-3. **Log Streaming** - Test historical and real-time logs
+**Required Secrets:**
 
-**Example:**
+- `RAILWAY_TOKEN` - Railway API token
+- `GITHUB_TOKEN` - GitHub API token (for PR comments)
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Railway API 400 Errors**
+
+   - Check if `RAILWAY_TOKEN` is set correctly
+   - Verify the service ID exists in Railway
+   - Check Railway API status at https://status.railway.app
+
+2. **Container Deployment Failures**
+
+   - Ensure the test repo is accessible
+   - Check Railway project has sufficient resources
+   - Verify GitHub token has repo access
+
+3. **Log Streaming Issues**
+   - Container may not be running
+   - Service ID may be incorrect
+   - Network connectivity issues
+
+### Debug Commands
 
 ```bash
-npm run test:all https://github.com/vercel/next.js
+# Check Railway API status
+curl -H "Authorization: Bearer $RAILWAY_TOKEN" \
+  https://backboard.railway.app/graphql/v2 \
+  -d '{"query":"query { __typename }"}'
+
+# Test local server health
+curl http://localhost:3000/api/health
+
+# Check container health (if deployed)
+curl https://your-container-url.up.railway.app/_container/health
 ```
 
-### 5. Interactive Container Inspector
+## Test Environment Setup
 
-**Script:** `scripts/container-inspector.js`  
-**Command:** `npm run inspect:container <project-id>`
-
-Interactive shell for manual container exploration:
+### Required Environment Variables
 
 ```bash
-npm run inspect:container user-repo
+# Railway configuration
+RAILWAY_TOKEN=your_railway_token
+RAILWAY_PROJECT_ID=your_project_id
 
-🐚 container> ls
-📁 Contents of .:
-  1. package.json
-  2. src/
-  3. README.md
+# GitHub configuration (for deployment)
+GITHUB_TOKEN=your_github_token
 
-🐚 container> cat package.json
-📄 Content of package.json:
-──────────────────────────────────────────────────
-{
-  "name": "my-app",
-  "version": "1.0.0"
-}
-──────────────────────────────────────────────────
-
-🐚 container> run npm install
-💻 Running: npm install
-...
-
-🐚 container> help
-📋 Available Commands:
-  ls [path]           - List files in directory
-  cat <file>          - Read file content
-  write <file>        - Write content to file
-  run <command>       - Run shell command
-  search <pattern>    - Search for files
-  status              - Show container status
-  exit                - Exit inspector
+# Test configuration
+BASE_URL=http://localhost:3000
 ```
 
-## 🚀 Quick Start
+### Local Development
 
-1. **Set up environment variables** (see `RAILWAY_SETUP.md`):
-
-   ```bash
-   # In .env.local
-   RAILWAY_PROJECT_ID=your-project-id
-   RAILWAY_TOKEN=your-railway-token
-   ```
-
-2. **Start the development server**:
+1. Start the development server:
 
    ```bash
    npm run dev
    ```
 
-3. **Run the complete test suite**:
+2. Run tests in another terminal:
    ```bash
-   npm run test:all https://github.com/your-username/test-repo
+   npm run test
    ```
 
-## 🔧 Environment Variables
+## Test Results
 
-- `TEST_BASE_URL` - Override base URL (default: `http://localhost:3000`)
-- `RAILWAY_PROJECT_ID` - Your Railway project ID
-- `RAILWAY_TOKEN` - Your Railway API token
-
-## 📊 Test Output
-
-Each test provides detailed logging with timestamps and status indicators:
+### Test Output Example
 
 ```
-2024-01-15T10:30:45.123Z 🔄 Starting container creation test for: https://github.com/user/repo
-2024-01-15T10:30:45.456Z ✅ Container deployed! Service ID: service-abc123
-2024-01-15T10:30:55.789Z 📝 Status: DEPLOYING
-2024-01-15T10:31:05.012Z ✅ Container is ready! URL: https://service-abc123.railway.app
+🚀 Cloud Editor Test Suite
+📍 Base URL: http://localhost:3000
+📦 Test Repo: https://github.com/basebase-ai/nextjs-starter
+
+🔧 Starting: Deploy Container
+✅ Container deployed: https://test-user-nextjs-starter-dev.up.railway.app
+✅ Deploy Container passed (53324ms)
+
+🔧 Starting: App Serving
+✅ App is serving correctly
+✅ App Serving passed (7592ms)
+
+🔧 Starting: Container API
+✅ Found 18 files
+✅ Container API working correctly
+
+🔧 Starting: Log Streaming
+✅ Received 5 logs
+
+📋 Test Results Summary
+========================================
+Total Duration: 71550ms
+Passed: 4/4
+Failed: 0/4
+
+🎉 All cloud-editor functionality working correctly!
 ```
 
-## 🐛 Troubleshooting
+**Note**: This test validates the entire cloud-editor workflow, helping identify whether issues are with Railway/deployment or the cloud-editor application itself.
 
-### Container Creation Fails
+## Continuous Integration
 
-- Check Railway credentials in `.env.local`
-- Verify Railway project ID is correct
-- Ensure sufficient Railway credits/usage
+The cloud-editor E2E test suite is integrated into the CI/CD pipeline:
 
-### File Operations Fail
+1. **Automatic Testing**: Runs on every PR and push to main
+2. **Artifact Upload**: Test results are saved as artifacts
+3. **PR Comments**: Results are posted as comments on PRs
+4. **Failure Alerts**: Failed tests block merging
 
-- Container may still be starting up (wait 30+ seconds)
-- Check container logs via log streaming test
-- Verify container API is running on port 3001
+## Best Practices
 
-### Log Streaming Issues
+1. **Run cloud-editor E2E tests locally** before pushing changes
+2. **Check test artifacts** when tests fail in CI
+3. **Monitor Railway usage** to avoid hitting limits
+4. **Clean up test deployments** manually if needed
+5. **Update test repo** if the default test repo changes
 
-- Railway service must be deployed and running
-- Check service and deployment IDs are correct
-- Network connectivity to Railway API
+## Performance Considerations
 
-### API Connectivity Issues
+- Cloud-editor E2E tests take ~1-2 minutes to complete
+- Railway deployments consume resources
+- Consider running tests during off-peak hours
+- Monitor Railway usage and costs
 
-- Ensure Next.js dev server is running (`npm run dev`)
-- Check for CORS issues in browser console
-- Verify Railway container is accessible
+## Current Status
 
-## 📝 Example Workflow
+The test suite validates the complete cloud-editor workflow:
 
-```bash
-# 1. Deploy a test container
-npm run test:container https://github.com/vercel/next.js
+- ✅ **Railway deployment** - Containers deploy correctly
+- ✅ **App serving** - Deployed apps are accessible
+- ✅ **Container API** - File operations work correctly
+- ✅ **Log streaming** - Real-time logs are received
 
-# 2. Wait for output showing project ID, e.g., "vercel-next"
-
-# 3. Test file operations
-npm run test:files vercel-next
-
-# 4. Test log streaming
-npm run test:logs vercel-next
-
-# 5. Manually explore the container
-npm run inspect:container vercel-next
-
-# 6. Visit the full UI
-# http://localhost:3000/vercel-next?repo=https://github.com/vercel/next.js
-```
-
-## 🎯 Success Criteria
-
-A fully working Railway container should:
-
-- ✅ Deploy successfully via Railway API
-- ✅ Pass all 10 file operation tests
-- ✅ Stream logs in real-time
-- ✅ Respond to container API calls within 30 seconds
-- ✅ Run the target repository's development server
-- ✅ Be accessible via generated Railway URL
-
-This testing toolkit provides comprehensive validation that your Railway container integration is working correctly before relying on it in production!
+This comprehensive test ensures all cloud-editor functionality is working properly.
