@@ -214,7 +214,7 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
       setIsDeploying(true);
       setIsLoading(true);
       setError('');
-                setStatus('Setting up a custom version for you to modify (this can take up to 30 seconds)...');
+                setStatus('Setting up a workspace in the cloud (this can take up to 30 seconds)...');
 
       // Extract project ID from repo URL
       const repoMatch = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);
@@ -248,7 +248,7 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
       console.log(`[RailwayContainerManager] Deployment successful:`, data.deployment);
       
       setDeployment(data.deployment);
-      setStatus('Your custom version is ready!');
+      setStatus('Your workspace is ready!');
       setIsLoading(false);
 
     } catch (err) {
@@ -679,7 +679,7 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
                 <Box h="100%" display="flex" style={{ alignItems: 'center', justifyContent: 'center' }}>
                   <Stack align="center" gap="md">
                     <Loader size="lg" />
-                    <Text size="sm" c="dimmed">Custom version deployed! Starting application...</Text>
+                    <Text size="sm" c="dimmed">Your workspace is ready! Starting the app now...</Text>
                   </Stack>
                 </Box>
               ) : (

@@ -306,39 +306,34 @@ app.post("/_container/run_linter", (req, res) => {
   }
 });
 
-// Replace lines in a file
-app.post("/_container/replace_lines", (req, res) => {
+// Replace text in a file (text-based replacement)
+app.post("/_container/replace_lines", async (req, res) => {
   try {
-    const { path: filePath, startLine, endLine, newContent } = req.body;
+    const { path: filePath, query, replacement } = req.body;
 
-    if (!filePath || startLine === undefined || endLine === undefined) {
+    if (!filePath || !query) {
       return res.json({
         success: false,
-        error: "path, startLine, and endLine are required",
+        error: "path and query are required",
       });
     }
 
-    const fullPath = path.resolve(WORKSPACE_DIR, filePath);
+    console.log(
+      `[Container API] replace_lines endpoint called with path: ${filePath}, query length: ${
+        query.length
+      }, replacement length: ${replacement?.length || 0}`
+    );
 
-    // Read the file
-    const content = fsSync.readFileSync(fullPath, "utf8");
-    const lines = content.split("\n");
+    // Use the async replaceLines function for text-based replacement
+    const result = await replaceLines(filePath, query, replacement || "");
 
-    // Replace the specified lines (convert to 0-based indexing)
-    const start = Math.max(0, startLine - 1);
-    const end = Math.min(lines.length, endLine);
-
-    // Remove old lines and insert new content
-    lines.splice(start, end - start, newContent);
-
-    // Write back to file
-    fsSync.writeFileSync(fullPath, lines.join("\n"));
-
-    res.json({
-      success: true,
-      message: `Lines ${startLine}-${endLine} replaced`,
-    });
+    console.log(
+      `[Container API] replace_lines endpoint returning result:`,
+      result
+    );
+    res.json(result);
   } catch (error) {
+    console.error(`[Container API] replace_lines endpoint error:`, error);
     res.json({ success: false, error: error.message });
   }
 });
@@ -807,6 +802,14 @@ async function replaceLines(path, query, replacement) {
 
     // Check if the query text exists in the file
     if (!content.includes(query)) {
+      console.log(`[Container API] replaceLines: query text not found in file`);
+      console.log(
+        `[Container API] replaceLines: query preview: "${query.substring(
+          0,
+          100
+        )}${query.length > 100 ? "..." : ""}"`
+      );
+
       return {
         success: false,
         path,
@@ -814,10 +817,11 @@ async function replaceLines(path, query, replacement) {
         error: "Text not found",
         suggestion:
           "Use read_file tool to examine the file and see its current content, then try again with the correct text.",
+        queryPreview: query.substring(0, 200),
       };
     }
 
-    // Replace the text
+    // Replace the text (replace only the first occurrence)
     const newContent = content.replace(query, replacement);
     const newLength = newContent.length;
 
@@ -834,6 +838,7 @@ async function replaceLines(path, query, replacement) {
       message: `Successfully replaced text in ${path}`,
       originalLength,
       newLength,
+      charsChanged: newLength - originalLength,
     };
   } catch (error) {
     console.error(`[Container API] replaceLines error:`, error);

@@ -717,13 +717,13 @@ const restartServerTool = tool({
 
 const replaceLinesTool = tool({
   description:
-    "Replace multi-line text blocks in a file with new content. More efficient than rewriting entire files when making targeted changes. IMPORTANT: If this fails, you should read the file first to understand its current state before trying again.",
+    "Replace text in a file by finding exact text matches and replacing them. This is more efficient than rewriting entire files when making targeted changes. The query text must match exactly (including whitespace and line breaks). IMPORTANT: If this fails, read the file first to understand its current state before trying again.",
   inputSchema: z.object({
     path: z.string().describe("Path to the file to modify"),
     query: z
       .string()
       .describe(
-        "The exact multi-line text to find and replace (must match exactly including whitespace)"
+        "The exact text to find and replace (must match exactly including whitespace, line breaks, and indentation)"
       ),
     replacement: z
       .string()
@@ -1008,8 +1008,9 @@ You can help users with their code by:
 
 When working with files:
 - Use write_file to create new files or completely replace the contents of existing files
-- Use replace_lines for targeted changes when you need to replace specific multi-line blocks within existing files
+- Use replace_lines for targeted text changes when you need to replace specific text patterns within existing files
 - replace_lines is more efficient and safer for making precise changes to existing code
+- The query text must match exactly (including whitespace, line breaks, and indentation)
 - write_file will overwrite the entire file, so use it when you need to rewrite substantial portions or create new files
 
 When working with commands:
