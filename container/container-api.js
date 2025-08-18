@@ -5,6 +5,14 @@ const fsSync = require("fs"); // For synchronous operations in endpoint handlers
 const path = require("path");
 const { exec } = require("child_process");
 const { createProxyMiddleware } = require("http-proxy-middleware");
+// Use built-in fetch (available in Node.js 18+) or fallback to node-fetch
+let fetch;
+if (typeof globalThis.fetch === 'function') {
+  fetch = globalThis.fetch;
+} else {
+  // Fallback for older Node.js versions
+  fetch = require("node-fetch");
+}
 
 const app = express();
 const PORT = process.env.PORT || 3001; // Railway will set PORT to public port
@@ -19,22 +27,89 @@ app.use(express.json());
 // CONTAINER API ROUTES (/_container/*)
 // ==========================================
 
-// Health check endpoint
-app.get("/_container/health", (req, res) => {
+// Test endpoint to check Next.js app directly
+app.get("/_container/test-nextjs", async (req, res) => {
   try {
+    const response = await fetch(`http://localhost:${USER_APP_PORT}`, {
+      method: "GET",
+      timeout: 5000,
+    });
+
     res.json({
+      success: true,
+      statusCode: response.status,
+      statusText: response.statusText,
+      responding: response.ok,
+      url: `http://localhost:${USER_APP_PORT}`,
+    });
+  } catch (error) {
+    res.json({
+      success: false,
+      error: error.message,
+      url: `http://localhost:${USER_APP_PORT}`,
+    });
+  }
+});
+
+// Health check endpoint
+app.get("/_container/health", async (req, res) => {
+  try {
+    const containerHealth = {
       success: true,
       status: "healthy",
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       memory: process.memoryUsage(),
       logBufferSize: logBuffer.length,
+    };
+
+    // Check if the user app (Next.js) is responding
+    let userAppHealth = null;
+    try {
+      const userAppResponse = await fetch(`http://localhost:${USER_APP_PORT}`, {
+        method: "GET",
+        timeout: 5000, // 5 second timeout
+      });
+
+      userAppHealth = {
+        status: userAppResponse.ok ? "healthy" : "unhealthy",
+        statusCode: userAppResponse.status,
+        responding: true,
+      };
+    } catch (error) {
+      userAppHealth = {
+        status: "unhealthy",
+        responding: false,
+        error: error.message,
+      };
+    }
+
+    // Overall health depends on both services
+    const overallHealthy =
+      containerHealth.success &&
+      userAppHealth.responding &&
+      userAppHealth.statusCode === 200;
+
+    res.json({
+      ...containerHealth,
+      overall: {
+        healthy: overallHealthy,
+        status: overallHealthy ? "ready" : "starting",
+      },
+      services: {
+        containerApi: containerHealth,
+        userApp: userAppHealth,
+      },
     });
   } catch (error) {
     res.status(500).json({
       success: false,
       error: error.message,
       timestamp: new Date().toISOString(),
+      overall: {
+        healthy: false,
+        status: "error",
+      },
     });
   }
 });
@@ -330,6 +405,8 @@ app.get("/_container/logs", (req, res) => {
 app.get("/_container/logs/stream", (req, res) => {
   const { spawn } = require("child_process");
 
+  console.log(`[Container API] Starting log stream for client`);
+
   // Set up Server-Sent Events
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -340,10 +417,12 @@ app.get("/_container/logs/stream", (req, res) => {
   });
 
   // Send connection message
-  res.write('data: {"type":"connected","message":"Log stream connected"}\n\n');
+  res.write('data: {"type":"connected","message":"Container log stream connected"}\n\n');
 
   // Send recent container API logs
-  logBuffer.slice(-10).forEach((log) => {
+  const recentLogs = logBuffer.slice(-20);
+  console.log(`[Container API] Sending ${recentLogs.length} recent logs to client`);
+  recentLogs.forEach((log) => {
     res.write(`data: ${JSON.stringify(log)}\n\n`);
   });
 
@@ -353,6 +432,7 @@ app.get("/_container/logs/stream", (req, res) => {
   const containerLogInterval = setInterval(() => {
     if (logBuffer.length > lastSentIndex) {
       const newLogs = logBuffer.slice(lastSentIndex);
+      console.log(`[Container API] Streaming ${newLogs.length} new logs to client`);
       newLogs.forEach((log) => {
         res.write(`data: ${JSON.stringify(log)}\n\n`);
       });
@@ -366,6 +446,7 @@ app.get("/_container/logs/stream", (req, res) => {
 
   // Check if log file exists and start tailing it
   if (fsSync.existsSync(userAppLogFile)) {
+    console.log(`[Container API] Starting to tail user app log file: ${userAppLogFile}`);
     userAppLogProcess = spawn("tail", ["-f", userAppLogFile]);
 
     userAppLogProcess.stdout.on("data", (data) => {
@@ -375,13 +456,49 @@ app.get("/_container/logs/stream", (req, res) => {
         .filter((line) => line.trim());
       lines.forEach((line) => {
         if (line.trim()) {
-          res.write(
-            `data: ${JSON.stringify({
-              type: "app_log",
-              timestamp: new Date().toISOString(),
-              message: line,
-            })}\n\n`
-          );
+          const logEntry = {
+            type: "app_log",
+            timestamp: new Date().toISOString(),
+            message: line,
+          };
+          res.write(`data: ${JSON.stringify(logEntry)}\n\n`);
+        }
+      });
+    });
+
+    userAppLogProcess.stderr.on("data", (data) => {
+      console.error(`[Container API] Tail process error: ${data}`);
+    });
+  } else {
+    console.log(`[Container API] User app log file not found: ${userAppLogFile}`);
+    res.write(`data: ${JSON.stringify({
+      type: "info",
+      timestamp: new Date().toISOString(),
+      message: `User app log file not found: ${userAppLogFile}`,
+    })}\n\n`);
+  }
+
+  // Also stream system logs (Next.js, npm, etc.)
+  const systemLogFile = "/tmp/system.log";
+  let systemLogProcess = null;
+
+  if (fsSync.existsSync(systemLogFile)) {
+    console.log(`[Container API] Starting to tail system log file: ${systemLogFile}`);
+    systemLogProcess = spawn("tail", ["-f", systemLogFile]);
+
+    systemLogProcess.stdout.on("data", (data) => {
+      const lines = data
+        .toString()
+        .split("\n")
+        .filter((line) => line.trim());
+      lines.forEach((line) => {
+        if (line.trim()) {
+          const logEntry = {
+            type: "system_log",
+            timestamp: new Date().toISOString(),
+            message: line,
+          };
+          res.write(`data: ${JSON.stringify(logEntry)}\n\n`);
         }
       });
     });
@@ -389,15 +506,23 @@ app.get("/_container/logs/stream", (req, res) => {
 
   // Heartbeat
   const heartbeat = setInterval(() => {
-    res.write(`data: ${JSON.stringify({ type: "heartbeat" })}\n\n`);
+    res.write(`data: ${JSON.stringify({ 
+      type: "heartbeat",
+      timestamp: new Date().toISOString(),
+      message: "Container log stream heartbeat"
+    })}\n\n`);
   }, 30000);
 
   // Clean up on disconnect
   req.on("close", () => {
+    console.log(`[Container API] Client disconnected, cleaning up log stream`);
     clearInterval(containerLogInterval);
     clearInterval(heartbeat);
     if (userAppLogProcess) {
       userAppLogProcess.kill();
+    }
+    if (systemLogProcess) {
+      systemLogProcess.kill();
     }
   });
 });

@@ -105,8 +105,8 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
 
   // Function to retry iframe loading
   const retryIframe = useCallback(() => {
-    if (deployment?.url && iframeRetryCount < 3) {
-      console.log(`Retrying iframe load (attempt ${iframeRetryCount + 1}/3)...`);
+    if (deployment?.url && iframeRetryCount < 5) {
+      console.log(`Retrying iframe load (attempt ${iframeRetryCount + 1}/5)...`);
       setIframeError(null);
       setIframeRetryCount(prev => prev + 1);
       
@@ -126,7 +126,7 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
 
   // Auto-retry after iframe error with delay
   useEffect(() => {
-    if (iframeError && iframeRetryCount < 3) {
+    if (iframeError && iframeRetryCount < 5) {
       const timer = setTimeout(() => {
         console.log('Auto-retrying iframe after error...');
         retryIframe();
@@ -139,9 +139,15 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
   // Show iframe when container is healthy
   useEffect(() => {
     if (isContainerHealthy && !iframeLoaded) {
-      console.log('Container is healthy, showing iframe');
-      setShouldShowIframe(true);
-      setIframeRetryCount(prev => prev + 1);
+      console.log('Container is healthy, waiting 2 seconds before showing iframe...');
+      // Add a small delay to ensure Next.js app is fully stable
+      const timer = setTimeout(() => {
+        console.log('Showing iframe after health check delay');
+        setShouldShowIframe(true);
+        setIframeRetryCount(prev => prev + 1);
+      }, 2000);
+      
+      return () => clearTimeout(timer);
     }
   }, [isContainerHealthy, iframeLoaded]);
 
@@ -271,8 +277,9 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
       });
 
       if (!response.ok) {
-        console.warn('[RailwayContainerManager] Railway logs API failed, trying container direct logs...');
-        throw new Error('Failed to start Railway log streaming');
+        const errorText = await response.text();
+        console.warn('[RailwayContainerManager] Railway logs API failed:', response.status, errorText);
+        throw new Error(`Failed to start Railway log streaming: ${response.status}`);
       }
 
       const reader = response.body?.getReader();
@@ -306,6 +313,11 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
                     )) {
                       setBuildErrors(prev => [...prev.slice(-9), data.message]); // Keep latest 10 errors
                     }
+                  } else if (data.type === 'error') {
+                    console.error('[RailwayContainerManager] Log stream error:', data.message);
+                    // Don't immediately fallback on GraphQL errors, let it retry
+                  } else if (data.type === 'connected') {
+                    console.log('[RailwayContainerManager] Railway log stream connected');
                   }
                 } catch (parseError) {
                   console.warn('Failed to parse log entry:', parseError);
@@ -388,12 +400,24 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
   }, [repoUrl, deployment, isDeploying, deployContainer]);
 
       // Health check function
-  const checkContainerHealth = useCallback(async (containerUrl: string): Promise<boolean> => {
+  const checkContainerHealth = useCallback(async (containerUrl: string): Promise<{ healthy: boolean; details?: Record<string, unknown> }> => {
     try {
       const healthResponse = await fetch(`${containerUrl}/_container/health`);
-      return healthResponse.ok;
+      if (!healthResponse.ok) {
+        return { healthy: false };
+      }
+      
+      const healthData = await healthResponse.json();
+      
+      // Check if the overall health is true (which means both container API and Next.js app are ready)
+      const isHealthy = healthData.overall?.healthy === true;
+      
+      return { 
+        healthy: isHealthy,
+        details: healthData 
+      };
     } catch (error) {
-      return false;
+      return { healthy: false };
     }
   }, []);
 
@@ -411,19 +435,37 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
           attempts++;
           console.log(`Health check attempt ${attempts}/${maxAttempts}...`);
           
-          if (await checkContainerHealth(deployment.url!)) {
-            console.log('Container is healthy!');
+          const healthResult = await checkContainerHealth(deployment.url!);
+          if (healthResult.healthy) {
+            console.log('Container is healthy!', healthResult.details);
             setIsContainerHealthy(true);
             setStatus('Container ready');
             setIsLoading(false);
             startLogStreaming();
             onDevServerReady?.();
             return;
+          } else {
+            console.log('Container not ready:', healthResult.details);
           }
           
           if (attempts < maxAttempts) {
+            const details = healthResult.details as Record<string, unknown>;
+            const services = details?.services as Record<string, unknown>;
+            const userApp = services?.userApp as Record<string, unknown>;
+            const userAppResponding = userApp?.responding as boolean;
+            const userAppStatusCode = userApp?.statusCode as number;
+            
+            let statusMessage: string;
+            if (userAppResponding && userAppStatusCode === 200) {
+              statusMessage = `Container ready! (attempt ${attempts}/${maxAttempts})`;
+            } else if (userAppResponding) {
+              statusMessage = `Next.js app responding but not ready... (attempt ${attempts}/${maxAttempts})`;
+            } else {
+              statusMessage = `Container API starting... (attempt ${attempts}/${maxAttempts})`;
+            }
+            
             console.log('Container not ready yet, retrying in 2 seconds...');
-            setStatus(`Checking container health... (attempt ${attempts}/${maxAttempts})`);
+            setStatus(statusMessage);
             await new Promise(resolve => setTimeout(resolve, 2000));
           }
         }
@@ -552,9 +594,9 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
                         <Text size="xs" c="red">
                           {iframeError}
                         </Text>
-                        {iframeRetryCount < 3 && (
+                        {iframeRetryCount < 5 && (
                           <Button size="xs" variant="light" onClick={retryIframe}>
-                            Retry ({iframeRetryCount + 1}/3)
+                            Retry ({iframeRetryCount + 1}/5)
                           </Button>
                         )}
                       </Group>
@@ -580,7 +622,7 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
                           >
                             Open in New Tab
                           </Button>
-                          {iframeRetryCount < 3 && (
+                          {iframeRetryCount < 5 && (
                             <Button variant="light" onClick={() => {
                               setIframeRetryCount(0);
                               setIframeError(null);
@@ -613,7 +655,17 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
                           timestamp: new Date().toISOString()
                         });
                         setIframeLoaded(false);
-                        setIframeError('Connection refused - the container may still be starting up or there may be network issues.');
+                        setIframeError('Next.js app is still starting up (503 error). Retrying automatically...');
+                        
+                        // Auto-retry after 3 seconds if we haven't exceeded max retries
+                        if (iframeRetryCount < 5) {
+                          setTimeout(() => {
+                            console.log('Auto-retrying iframe after 503 error...');
+                            setIframeRetryCount(prev => prev + 1);
+                            setIframeError(null);
+                            setIframeLoaded(false);
+                          }, 3000);
+                        }
                       }}
                       onLoad={() => {
                         console.log('Iframe loaded successfully for:', currentUrl);
@@ -662,16 +714,18 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
             </Box>
           </Tabs.Panel>
 
-          <Tabs.Panel value="files" h="calc(100% - 40px)">
-            <Group h="100%" gap={0} align="stretch">
+          <Tabs.Panel value="files" h="calc(100% - 40px)" style={{ overflow: 'hidden' }}>
+            <Group h="100%" gap={0} align="stretch" style={{ overflow: 'hidden' }}>
               {/* File Explorer - Left Side */}
               <Box 
                 w={300} 
                 h="100%" 
                 style={{ 
                   minWidth: '200px',
+                  maxWidth: '300px',
                   borderRight: '1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4))',
-                  backgroundColor: 'light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-7))'
+                  backgroundColor: 'light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-7))',
+                  overflow: 'hidden'
                 }}
               >
                 <FileExplorer
@@ -682,7 +736,7 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
               </Box>
 
               {/* Code Editor - Right Side */}
-              <Box style={{ flex: 1 }} h="100%">
+              <Box style={{ flex: 1, overflow: 'hidden' }} h="100%">
                 <CodeEditor
                   filePath={selectedFile}
                   containerRef={selfRef}

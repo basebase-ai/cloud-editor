@@ -273,7 +273,7 @@ export default function CodeEditor({ filePath, containerRef }: CodeEditorProps) 
       )}
 
       {/* Editor */}
-      <Box style={{ flex: 1 }} p="md">
+      <Box style={{ flex: 1, overflow: 'hidden' }} p="md">
         <Textarea
           value={content}
           onChange={(e) => handleContentChange(e.target.value)}
@@ -285,6 +285,13 @@ export default function CodeEditor({ filePath, containerRef }: CodeEditorProps) 
               fontFamily: 'Monaco, Menlo, "Ubuntu Mono", monospace',
               fontSize: '14px',
               lineHeight: '1.5',
+              maxHeight: '100%',
+              overflow: 'auto'
+            },
+            wrapper: {
+              height: '100%',
+              display: 'flex',
+              flexDirection: 'column'
             }
           }}
         />

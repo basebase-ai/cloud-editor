@@ -42,13 +42,23 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       );
     }
 
+    // Use a more reliable query that works with Railway's API
     const logsQuery = `
-      query DeploymentLogs($deploymentId: String!, $limit: Int!) {
-        logs(deploymentId: $deploymentId, limit: $limit) {
-          edges {
-            node {
-              timestamp
-              message
+      query ServiceLogs($serviceId: String!, $limit: Int!) {
+        service(id: $serviceId) {
+          deployments(first: 1) {
+            edges {
+              node {
+                id
+                logs(first: $limit) {
+                  edges {
+                    node {
+                      timestamp
+                      message
+                    }
+                  }
+                }
+              }
             }
           }
         }
@@ -66,7 +76,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       body: JSON.stringify({
         query: logsQuery,
         variables: {
-          deploymentId: deploymentId || serviceId,
+          serviceId: serviceId,
           limit: parseInt(limit, 10),
         },
       }),
@@ -80,20 +90,43 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       const errorText = await response.text();
       console.error("[Railway Logs API] Railway logs fetch failed:", errorText);
       return NextResponse.json(
-        { error: "Failed to fetch logs from Railway" },
+        {
+          error: "Failed to fetch logs from Railway",
+          details: errorText,
+          status: response.status,
+        },
         { status: 500 }
       );
     }
 
     const data = await response.json();
-    const logs: LogEntry[] =
-      data.data?.logs?.edges?.map(
-        (edge: { node: { timestamp: string; message: string } }) => ({
-          timestamp: edge.node.timestamp,
-          message: edge.node.message,
-          level: "info", // Railway doesn't provide log levels in this format
-        })
-      ) || [];
+
+    // Handle GraphQL errors
+    if (data.errors) {
+      console.error("[Railway Logs API] GraphQL errors:", data.errors);
+      return NextResponse.json(
+        {
+          error: "GraphQL query failed",
+          details: data.errors,
+        },
+        { status: 500 }
+      );
+    }
+
+    // Extract logs from the nested structure
+    const deployments = data.data?.service?.deployments?.edges || [];
+    const logs: LogEntry[] = [];
+
+    for (const deployment of deployments) {
+      const deploymentLogs = deployment.node?.logs?.edges || [];
+      for (const logEdge of deploymentLogs) {
+        logs.push({
+          timestamp: logEdge.node.timestamp,
+          message: logEdge.node.message,
+          level: "info",
+        });
+      }
+    }
 
     console.log(
       `[Railway Logs API] Retrieved ${logs.length} logs from Railway`
@@ -168,16 +201,28 @@ export async function POST(request: NextRequest): Promise<Response> {
           `[Railway Logs API] Stream connected, starting log polling...`
         );
 
+        let lastLogTimestamp: string | null = null;
+
         // Set up log polling
         const pollLogs = async () => {
           try {
+            // Use a simpler query that's more likely to work
             const logsQuery = `
-              query DeploymentLogs($deploymentId: String!, $limit: Int!) {
-                logs(deploymentId: $deploymentId, limit: $limit) {
-                  edges {
-                    node {
-                      timestamp
-                      message
+              query ServiceLogs($serviceId: String!, $limit: Int!) {
+                service(id: $serviceId) {
+                  deployments(first: 1) {
+                    edges {
+                      node {
+                        id
+                        logs(first: $limit) {
+                          edges {
+                            node {
+                              timestamp
+                              message
+                            }
+                          }
+                        }
+                      }
                     }
                   }
                 }
@@ -195,35 +240,69 @@ export async function POST(request: NextRequest): Promise<Response> {
               body: JSON.stringify({
                 query: logsQuery,
                 variables: {
-                  deploymentId: deploymentId || serviceId,
-                  limit: 50, // Get latest 50 logs
+                  serviceId: serviceId,
+                  limit: 20, // Get latest 20 logs
                 },
               }),
             });
 
             if (response.ok) {
               const data = await response.json();
-              const logs = data.data?.logs?.edges || [];
+
+              if (data.errors) {
+                console.error(
+                  "[Railway Logs API] GraphQL errors during polling:",
+                  data.errors
+                );
+                controller.enqueue(
+                  encoder.encode(
+                    `data: {"type":"error","message":"GraphQL query failed"}\n\n`
+                  )
+                );
+                return;
+              }
+
+              const deployments = data.data?.service?.deployments?.edges || [];
+              const logs: any[] = [];
+
+              for (const deployment of deployments) {
+                const deploymentLogs = deployment.node?.logs?.edges || [];
+                for (const logEdge of deploymentLogs) {
+                  logs.push(logEdge.node);
+                }
+              }
 
               console.log(
                 `[Railway Logs API] Polled ${logs.length} logs from Railway`
               );
 
-              // Send each log entry
-              for (const edge of logs) {
-                const logEntry = {
-                  type: "log",
-                  timestamp: edge.node.timestamp,
-                  message: edge.node.message,
-                };
+              // Send each log entry, but only new ones
+              for (const log of logs) {
+                if (!lastLogTimestamp || log.timestamp > lastLogTimestamp) {
+                  const logEntry = {
+                    type: "log",
+                    timestamp: log.timestamp,
+                    message: log.message,
+                  };
 
-                controller.enqueue(
-                  encoder.encode(`data: ${JSON.stringify(logEntry)}\n\n`)
-                );
+                  controller.enqueue(
+                    encoder.encode(`data: ${JSON.stringify(logEntry)}\n\n`)
+                  );
+
+                  if (!lastLogTimestamp || log.timestamp > lastLogTimestamp) {
+                    lastLogTimestamp = log.timestamp;
+                  }
+                }
               }
             } else {
+              const errorText = await response.text();
               console.error(
-                `[Railway Logs API] Poll failed with status: ${response.status}`
+                `[Railway Logs API] Poll failed with status: ${response.status}, error: ${errorText}`
+              );
+              controller.enqueue(
+                encoder.encode(
+                  `data: {"type":"error","message":"Poll failed: ${response.status}"}\n\n`
+                )
               );
             }
           } catch (error) {
@@ -234,8 +313,8 @@ export async function POST(request: NextRequest): Promise<Response> {
           }
         };
 
-        // Poll for logs every 2 seconds
-        const interval = setInterval(pollLogs, 2000);
+        // Poll for logs every 5 seconds (less frequent to avoid rate limiting)
+        const interval = setInterval(pollLogs, 5000);
 
         // Initial poll
         pollLogs();
