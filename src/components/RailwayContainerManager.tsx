@@ -701,11 +701,11 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
                 <Text c="dimmed">Waiting for logs...</Text>
               ) : (
                 logs.map((log, index) => (
-                  <Box key={index} mb="xs">
+                  <Box key={index} mb={1}>
                     <Text size="xs" c="dimmed" span>
                       [{new Date(log.timestamp).toLocaleTimeString()}]
                     </Text>
-                    <Text size="sm" ml="sm" style={{ whiteSpace: 'pre-wrap' }}>
+                    <Text size="sm" ml="sm" span style={{ whiteSpace: 'pre-wrap' }}>
                       {log.message}
                     </Text>
                   </Box>
