@@ -100,7 +100,7 @@ curl https://your-container-url.up.railway.app/_container/health
 ```bash
 # Railway configuration
 RAILWAY_TOKEN=your_railway_token
-RAILWAY_PROJECT_ID=your_project_id
+RAILWAY_DEV_PROJECT_ID=your_railway_dev_project_id
 
 # GitHub configuration (for deployment)
 GITHUB_TOKEN=your_github_token

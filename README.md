@@ -40,8 +40,8 @@ Create a `.env.local` file with the following variables:
 GOOGLE_GENERATIVE_AI_API_KEY=your_google_ai_api_key_here
 
 # Railway Configuration (server-side only)
-RAILWAY_PROJECT_ID=your_railway_project_id
-RAILWAY_ENVIRONMENT_ID=your_railway_environment_id
+RAILWAY_DEV_PROJECT_ID=your_railway_dev_project_id
+RAILWAY_DEV_ENVIRONMENT_ID=your_railway_dev_environment_id
 RAILWAY_TOKEN=your_railway_api_token
 ```
 

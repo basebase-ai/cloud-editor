@@ -134,8 +134,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const { repoUrl, userId, githubToken } = body;
 
     // Get Railway credentials from server environment
-    const railwayProjectId = process.env.RAILWAY_PROJECT_ID;
-    const railwayEnvironmentId = process.env.RAILWAY_ENVIRONMENT_ID;
+    const railwayProjectId = process.env.RAILWAY_DEV_PROJECT_ID;
+    const railwayEnvironmentId = process.env.RAILWAY_DEV_ENVIRONMENT_ID;
     const railwayToken = process.env.RAILWAY_TOKEN;
 
     if (!repoUrl) {
@@ -747,7 +747,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const projectId = searchParams.get("projectId");
 
     // Get Railway credentials from server environment
-    const railwayProjectId = process.env.RAILWAY_PROJECT_ID;
+    const railwayProjectId = process.env.RAILWAY_DEV_PROJECT_ID;
     const railwayToken = process.env.RAILWAY_TOKEN;
 
     if (!projectId) {
