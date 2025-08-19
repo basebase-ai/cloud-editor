@@ -26,13 +26,14 @@ interface ChatInterfaceProps {
   repoUrl: string;
   githubToken: string;
   containerUrl?: string | null;
+  onAIResponseComplete?: () => void;
 }
 
 export interface ChatInterfaceRef {
   addMessage: (content: string, role: 'user' | 'assistant') => void;
 }
 
-const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(({ onCodeChange, repoUrl, containerUrl }, ref) => {
+const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(({ onCodeChange, repoUrl, containerUrl, onAIResponseComplete }, ref) => {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [input, setInput] = useState<string>('');
@@ -78,7 +79,14 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(({ onCode
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
+    console.log('[ChatInterface] Form submitted, input:', input, 'isLoading:', isLoading, 'containerUrl:', containerUrl);
     if (!input.trim() || isLoading) return;
+    
+    // Don't allow messages if container isn't ready
+    if (!containerUrl) {
+      console.log('[ChatInterface] Container not ready, cannot send message. containerUrl:', containerUrl);
+      return;
+    }
     
     const userInput = input;
     setInput('');
@@ -93,8 +101,14 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(({ onCode
     setMessages(prev => [...prev, userMessage]);
     setIsLoading(true);
 
-    const controller = new AbortController();
+        const controller = new AbortController();
     setAbortController(controller);
+
+    // Add a timeout to prevent hanging requests
+    const timeoutId = setTimeout(() => {
+      console.log('[ChatInterface] Request timeout, aborting...');
+      controller.abort();
+    }, 60000); // 60 second timeout
 
     try {
       const response = await fetch('/api/chat', {
@@ -102,18 +116,18 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(({ onCode
         headers: {
           'Content-Type': 'application/json',
         },
-                  body: JSON.stringify({
-            messages: [...messages, userMessage].map(msg => ({
-              role: msg.role,
-              content: msg.content
-            })),
-            containerUrl: containerUrl
-          }),
+        body: JSON.stringify({
+          messages: [...messages, userMessage].map(msg => ({
+            role: msg.role,
+            content: msg.content
+          })),
+          containerUrl: containerUrl
+        }),
         signal: controller.signal,
       });
 
       if (!response.ok) {
-        throw new Error('Failed to send message');
+        throw new Error(`Chat request failed: ${response.status} ${response.statusText}`);
       }
 
       const reader = response.body?.getReader();
@@ -152,9 +166,15 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(({ onCode
       }
 
       onCodeChange();
+      
+      // Check for AI file changes after response is complete
+      if (onAIResponseComplete) {
+        onAIResponseComplete();
+      }
     } catch (error) {
       console.error('Error sending message:', error);
     } finally {
+      clearTimeout(timeoutId);
       setIsLoading(false);
       setAbortController(null);
     }
@@ -447,6 +467,14 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(({ onCode
             </Box>
           )}
           
+          {!containerUrl && (
+            <Box py="xs" px="sm">
+              <Text size="sm" c="dimmed" ta="center">
+                Waiting for container to be ready...
+              </Text>
+            </Box>
+          )}
+          
           {/* Invisible element for auto-scroll targeting */}
           <div ref={messagesEndRef} />
         </Stack>
@@ -458,11 +486,11 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(({ onCode
           <Group gap="xs" align="flex-end">
             <Textarea
               flex={1}
-              placeholder="Ask me to make changes..."
+              placeholder={containerUrl ? "Ask me to make changes..." : "Waiting for container..."}
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
-              disabled={isLoading}
+              disabled={isLoading || !containerUrl}
               radius="md"
               size="sm"
               autosize
@@ -475,7 +503,13 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(({ onCode
                 color="red"
                 radius="xl"
                 size="lg"
-                onClick={stop}
+                onClick={() => {
+                  console.log('[ChatInterface] Manual stop requested');
+                  stop();
+                  setIsLoading(false);
+                  setAbortController(null);
+                }}
+                title="Stop request"
               >
                 <IconPlayerStop size={16} />
               </ActionIcon>
@@ -486,7 +520,7 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(({ onCode
                 color="blue"
                 radius="xl"
                 size="lg"
-                disabled={!input.trim()}
+                disabled={!input.trim() || !containerUrl}
               >
                 <IconSend size={16} />
               </ActionIcon>

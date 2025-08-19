@@ -15,6 +15,8 @@ interface FileTrackingContextType {
   markFileAsChanged: (path: string, newContent: string) => void;
   resetTracking: () => void;
   getChangedFiles: () => string[];
+  onFileChange: (callback: (filePath: string) => void) => void;
+  removeFileChangeListener: (callback: (filePath: string) => void) => void;
 }
 
 const FileTrackingContext = createContext<FileTrackingContextType | undefined>(undefined);
@@ -25,6 +27,7 @@ interface FileTrackingProviderProps {
 
 export function FileTrackingProvider({ children }: FileTrackingProviderProps) {
   const [fileStates, setFileStates] = useState<Record<string, FileState>>({});
+  const [fileChangeCallbacks, setFileChangeCallbacks] = useState<Set<(filePath: string) => void>>(new Set());
 
   const setOriginalFile = useCallback((path: string, content: string) => {
     setFileStates(prev => ({
@@ -49,18 +52,41 @@ export function FileTrackingProvider({ children }: FileTrackingProviderProps) {
   const markFileAsChanged = useCallback((path: string, newContent: string) => {
     setFileStates(prev => {
       const currentState = prev[path];
+      const newState = {
+        original: currentState?.original ?? null,
+        current: newContent
+      };
+      
+      // Notify all listeners about the file change
+      fileChangeCallbacks.forEach(callback => {
+        try {
+          callback(path);
+        } catch (error) {
+          console.error('Error in file change callback:', error);
+        }
+      });
+      
       return {
         ...prev,
-        [path]: {
-          original: currentState?.original ?? null,
-          current: newContent
-        }
+        [path]: newState
       };
     });
-  }, []);
+  }, [fileChangeCallbacks]);
 
   const resetTracking = useCallback(() => {
     setFileStates({});
+  }, []);
+
+  const onFileChange = useCallback((callback: (filePath: string) => void) => {
+    setFileChangeCallbacks(prev => new Set(prev).add(callback));
+  }, []);
+
+  const removeFileChangeListener = useCallback((callback: (filePath: string) => void) => {
+    setFileChangeCallbacks(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(callback);
+      return newSet;
+    });
   }, []);
 
   const getChangedFiles = useCallback((): string[] => {
@@ -92,7 +118,9 @@ export function FileTrackingProvider({ children }: FileTrackingProviderProps) {
     setCurrentFile,
     markFileAsChanged,
     resetTracking,
-    getChangedFiles
+    getChangedFiles,
+    onFileChange,
+    removeFileChangeListener
   };
 
   return (

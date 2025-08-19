@@ -195,9 +195,8 @@ class CloudEditorTest {
         action: "replaceLines",
         params: {
           path: tmpFilePath,
-          startLine: 2,
-          endLine: 2,
-          newContent: "REPLACED",
+          query: "beta",
+          replacement: "REPLACED",
         },
         containerUrl: this.containerUrl,
       }),
@@ -446,9 +445,17 @@ class CloudEditorTest {
         results.push(
           await this.runTest("Container API", () => this.testContainerAPI())
         );
-        results.push(
-          await this.runTest("Log Streaming", () => this.testLogStreaming())
-        );
+        // Skip log streaming test if we're reusing an existing service (no real deployment ID)
+        if (this.deployment.deploymentId !== "existing") {
+          results.push(
+            await this.runTest("Log Streaming", () => this.testLogStreaming())
+          );
+        } else {
+          this.log(
+            "Skipping log streaming test (reusing existing service)",
+            "info"
+          );
+        }
       }
     } finally {
       // Cleanup info

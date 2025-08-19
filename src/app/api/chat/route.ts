@@ -6,6 +6,32 @@ import { z } from "zod";
 // Global variable to store container URL for the current request
 let currentContainerUrl: string | null = null;
 
+// Global variable to track file changes made by AI agent
+const aiFileChanges: Set<string> = new Set();
+
+// Function to notify frontend about file changes
+async function notifyFileChange(filePath: string) {
+  try {
+    if (!currentContainerUrl) return;
+
+    // Read the updated file content
+    const result = await callContainer("readFile", { path: filePath });
+    if (result.success && result.content) {
+      // Store the change in the global tracking
+      aiFileChanges.add(filePath);
+
+      // The frontend will pick up this change through the file tracking system
+      // when it next polls or when the user interacts with the file
+      console.log(`[Chat API] File change tracked: ${filePath}`);
+    }
+  } catch (error) {
+    console.error(
+      `[Chat API] Failed to notify file change for ${filePath}:`,
+      error
+    );
+  }
+}
+
 // Types for tool status events
 interface ToolStartEvent {
   toolName: string;
@@ -436,6 +462,12 @@ const writeFileTool = tool({
     try {
       const result = await callContainer("writeFile", { path, content });
       console.log(`[Tool] write_file result:`, result);
+
+      // Notify frontend about file change if successful
+      if (result.success) {
+        await notifyFileChange(path);
+      }
+
       return {
         success: result.success,
         path: result.path,
@@ -615,6 +647,12 @@ const deleteFileTool = tool({
     try {
       const result = await callContainer("deleteFile", { path });
       console.log(`[Tool] delete_file result:`, result);
+
+      // Notify frontend about file change if successful
+      if (result.success) {
+        await notifyFileChange(path);
+      }
+
       return {
         success: result.success,
         path: result.path,
@@ -747,6 +785,12 @@ const replaceLinesTool = tool({
         originalLength?: number;
         newLength?: number;
       };
+
+      // Notify frontend about file change if successful
+      if (typedResult.success) {
+        await notifyFileChange(path);
+      }
+
       return {
         success: typedResult.success,
         path: typedResult.path,
@@ -1101,6 +1145,52 @@ Always be thorough and methodical in your approach. Break down complex requests 
   } catch (error) {
     console.error("[Chat API] Top-level error:", error);
     return new Response("Internal server error", { status: 500 });
+  }
+}
+
+export async function GET(req: Request) {
+  try {
+    const url = new URL(req.url);
+    const action = url.searchParams.get("action");
+
+    if (action === "getFileChanges") {
+      // Return the list of files changed by AI agent and clear the tracking
+      const changedFiles = Array.from(aiFileChanges);
+      aiFileChanges.clear();
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          changedFiles,
+        }),
+        {
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "Invalid action",
+      }),
+      {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  } catch (error) {
+    console.error("[Chat API] GET error:", error);
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "Internal server error",
+      }),
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
   }
 }
 

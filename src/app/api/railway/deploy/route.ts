@@ -126,6 +126,9 @@ async function waitForDeploymentReady(
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const requestId = Math.random().toString(36).substring(2, 8);
+  console.log(`[Deploy API] Request ${requestId} started`);
+
   try {
     const body = (await request.json()) as DeploymentRequest;
     const { repoUrl, userId, githubToken } = body;
@@ -237,7 +240,139 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       if (existingService) {
         const serviceId = existingService.node.id;
         console.log(
-          `🔄 Reusing existing service: ${serviceName} (${serviceId})`
+          `[Deploy API] Request ${requestId}: Found existing service: ${serviceName} (${serviceId})`
+        );
+
+        // Check if the existing service is already running successfully
+        console.log(
+          `[Deploy API] Request ${requestId}: Checking if existing service is already running...`
+        );
+        const existingDeploymentStatus = await waitForDeploymentReady(
+          railwayProjectId,
+          serviceId,
+          railwayToken
+        );
+
+        if (existingDeploymentStatus.status === "SUCCESS") {
+          console.log(
+            `[Deploy API] Request ${requestId}: Existing service is already running successfully - no redeployment needed!`
+          );
+
+          // Get the service URL
+          const serviceUrlQuery = `
+            query Service($id: String!) {
+              service(id: $id) {
+                url
+                deployments {
+                  edges {
+                    node {
+                      id
+                      status
+                      createdAt
+                    }
+                  }
+                }
+              }
+            }
+          `;
+
+          const serviceUrlResponse = await fetch(RAILWAY_API_URL, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${railwayToken}`,
+            },
+            body: JSON.stringify({
+              query: serviceUrlQuery,
+              variables: { id: serviceId },
+            }),
+          });
+
+          if (serviceUrlResponse.ok) {
+            const serviceData = await serviceUrlResponse.json();
+            console.log(
+              `[Deploy API] Request ${requestId}: Service URL response:`,
+              serviceData
+            );
+            const serviceUrl = serviceData.data?.service?.url;
+            const latestDeployment =
+              serviceData.data?.service?.deployments?.edges?.[0]?.node;
+
+            if (serviceUrl && latestDeployment) {
+              console.log(
+                `[Deploy API] Request ${requestId}: Using existing running service - RETURNING EARLY`
+              );
+              console.log(
+                `[Deploy API] Request ${requestId}: Service URL:`,
+                serviceUrl
+              );
+              console.log(
+                `[Deploy API] Request ${requestId}: Deployment ID:`,
+                latestDeployment.id
+              );
+              return NextResponse.json({
+                success: true,
+                deployment: {
+                  serviceId: serviceId,
+                  deploymentId: latestDeployment.id,
+                  projectId: railwayProjectId,
+                  repoUrl: repoUrl,
+                  status: "SUCCESS",
+                  url: serviceUrl,
+                  createdAt: latestDeployment.createdAt,
+                },
+              });
+            } else {
+              console.log(
+                `[Deploy API] Request ${requestId}: Service URL or deployment not found, proceeding with redeployment`
+              );
+              console.log(
+                `[Deploy API] Request ${requestId}: Service URL:`,
+                serviceUrl
+              );
+              console.log(
+                `[Deploy API] Request ${requestId}: Latest deployment:`,
+                latestDeployment
+              );
+            }
+          } else {
+            console.log(
+              `[Deploy API] Request ${requestId}: Service URL response not ok:`,
+              serviceUrlResponse.status,
+              serviceUrlResponse.statusText
+            );
+            console.log(
+              `[Deploy API] Request ${requestId}: Using default Railway URL format`
+            );
+
+            // Use default Railway URL format when service URL query fails
+            const defaultUrl = `https://${serviceName}-dev.up.railway.app`;
+            console.log(
+              `[Deploy API] Request ${requestId}: Using existing running service with default URL - RETURNING EARLY`
+            );
+            console.log(
+              `[Deploy API] Request ${requestId}: Service URL:`,
+              defaultUrl
+            );
+
+            return NextResponse.json({
+              success: true,
+              deployment: {
+                serviceId: serviceId,
+                deploymentId: "existing",
+                projectId: railwayProjectId,
+                repoUrl: repoUrl,
+                status: "SUCCESS",
+                url: defaultUrl,
+                createdAt: new Date().toISOString(),
+              },
+            });
+          }
+        }
+
+        // If we get here, the service exists but is not running successfully, proceed with redeployment
+        console.log(
+          `[Deploy API] Request ${requestId}: Existing service needs redeployment - updating environment variables...`
         );
 
         // Update environment variables for existing service

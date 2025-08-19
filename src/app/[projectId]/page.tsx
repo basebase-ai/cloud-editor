@@ -142,6 +142,14 @@ export default function ProjectPage() {
     }
   };
 
+  const handleAIResponseComplete = () => {
+    // Trigger immediate check for AI file changes
+    if (containerRef.current) {
+      console.log('[ProjectPage] AI response complete, checking for file changes...');
+      containerRef.current.checkForAIChanges();
+    }
+  };
+
   return (
     <AppShell
       header={{ height: 60 }}
@@ -180,13 +188,14 @@ export default function ProjectPage() {
       </AppShell.Header>
 
       <AppShell.Aside p={0}>
-        <ChatInterface 
-          ref={chatRef}
-          onCodeChange={() => setHasChanges(true)}
-          repoUrl={repoUrl}
-          githubToken={githubToken}
-          containerUrl={containerUrl}
-        />
+                      <ChatInterface
+                ref={chatRef}
+                onCodeChange={() => setHasChanges(true)}
+                repoUrl={repoUrl}
+                githubToken={githubToken}
+                containerUrl={containerUrl}
+                onAIResponseComplete={handleAIResponseComplete}
+              />
       </AppShell.Aside>
 
       <AppShell.Main h="calc(100vh - 60px)">

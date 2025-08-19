@@ -188,10 +188,19 @@ export async function POST(request: NextRequest): Promise<Response> {
         );
 
         let lastLogTimestamp: string | null = null;
+        let isControllerClosed = false;
 
         // Set up log polling
         const pollLogs = async () => {
           try {
+            // Check if controller is still open before making request
+            if (isControllerClosed) {
+              console.log(
+                "[Railway Logs API] Controller closed, stopping polling"
+              );
+              return;
+            }
+
             // Use the correct deploymentLogs query for streaming
             const logsQuery = `
               query DeploymentLogs($deploymentId: String!, $limit: Int!) {
@@ -201,8 +210,6 @@ export async function POST(request: NextRequest): Promise<Response> {
                 }
               }
             `;
-
-            console.log(`[Railway Logs API] Polling logs from Railway...`);
 
             const response = await fetch(RAILWAY_API_URL, {
               method: "POST",
@@ -227,19 +234,18 @@ export async function POST(request: NextRequest): Promise<Response> {
                   "[Railway Logs API] GraphQL errors during polling:",
                   data.errors
                 );
-                controller.enqueue(
-                  encoder.encode(
-                    `data: {"type":"error","message":"GraphQL query failed"}\n\n`
-                  )
-                );
+                // Only enqueue if controller is still open
+                if (!isControllerClosed) {
+                  controller.enqueue(
+                    encoder.encode(
+                      `data: {"type":"error","message":"GraphQL query failed"}\n\n`
+                    )
+                  );
+                }
                 return;
               }
 
               const logs: RailwayLog[] = data.data?.deploymentLogs || [];
-
-              console.log(
-                `[Railway Logs API] Polled ${logs.length} logs from Railway`
-              );
 
               // Send each log entry, but only new ones
               for (const log of logs) {
@@ -250,9 +256,12 @@ export async function POST(request: NextRequest): Promise<Response> {
                     message: log.message,
                   };
 
-                  controller.enqueue(
-                    encoder.encode(`data: ${JSON.stringify(logEntry)}\n\n`)
-                  );
+                  // Only enqueue if controller is still open
+                  if (!isControllerClosed) {
+                    controller.enqueue(
+                      encoder.encode(`data: ${JSON.stringify(logEntry)}\n\n`)
+                    );
+                  }
 
                   if (!lastLogTimestamp || log.timestamp > lastLogTimestamp) {
                     lastLogTimestamp = log.timestamp;
@@ -264,17 +273,25 @@ export async function POST(request: NextRequest): Promise<Response> {
               console.error(
                 `[Railway Logs API] Poll failed with status: ${response.status}, error: ${errorText}`
               );
-              controller.enqueue(
-                encoder.encode(
-                  `data: {"type":"error","message":"Poll failed: ${response.status}"}\n\n`
-                )
-              );
+              // Only enqueue if controller is still open
+              if (!isControllerClosed) {
+                controller.enqueue(
+                  encoder.encode(
+                    `data: {"type":"error","message":"Poll failed: ${response.status}"}\n\n`
+                  )
+                );
+              }
             }
           } catch (error) {
             console.error("[Railway Logs API] Error polling logs:", error);
-            controller.enqueue(
-              encoder.encode(`data: {"type":"error","message":"${error}"}\n\n`)
-            );
+            // Only enqueue if controller is still open
+            if (!isControllerClosed) {
+              controller.enqueue(
+                encoder.encode(
+                  `data: {"type":"error","message":"${error}"}\n\n`
+                )
+              );
+            }
           }
         };
 
@@ -290,6 +307,7 @@ export async function POST(request: NextRequest): Promise<Response> {
             `[Railway Logs API] Stream timeout, closing after 5 minutes`
           );
           clearInterval(interval);
+          isControllerClosed = true;
           controller.close();
         }, 5 * 60 * 1000); // Close after 5 minutes
       },

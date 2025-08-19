@@ -19,6 +19,7 @@ export interface RailwayContainerManagerRef {
   restartDevServer: () => Promise<void>;
   getBuildErrors: () => string[];
   getContainerUrl: () => string | null;
+  checkForAIChanges: () => Promise<void>;
 }
 
 interface DeploymentInfo {
@@ -57,51 +58,89 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
   const [currentUrl, setCurrentUrl] = useState('');
   const [shouldShowIframe, setShouldShowIframe] = useState(false);
   const [isContainerHealthy, setIsContainerHealthy] = useState(false);
-    const { markFileAsChanged } = useFileTracking();
-    const eventSourceRef = useRef<EventSource | null>(null);
+  const { markFileAsChanged, onFileChange, removeFileChangeListener } = useFileTracking();
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const deploymentInProgressRef = useRef<boolean>(false); // Additional lock to prevent race conditions
 
-    // Expose methods to parent component
-    useImperativeHandle(ref, () => {
-      const methods = {
-        restartDevServer: async () => {
-          if (!deployment?.url) {
-            throw new Error('Container not available');
-          }
-
-          try {
-            setStatus('Restarting development server...');
-            const response = await fetch('/api/container', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                action: 'restartServer',
-                params: {},
-                containerUrl: deployment.url,
-              }),
-            });
-
-            if (!response.ok) {
-              throw new Error('Failed to restart server');
-            }
-
-            setStatus('Development server restarted');
-          } catch (error) {
-            console.error('Failed to restart dev server:', error);
-            throw error;
-          }
-        },
-        getBuildErrors: () => {
-          return buildErrors;
-        },
-        getContainerUrl: () => {
-          return deployment?.url || null;
+  // Expose methods to parent component
+  useImperativeHandle(ref, () => {
+    const methods = {
+      getContainerUrl: () => deployment?.url || null,
+      restartDevServer: async (): Promise<void> => {
+        if (!deployment?.url) {
+          throw new Error('Container not ready');
         }
-      };
-      
-      // Store reference to self for internal use
-      selfRef.current = methods;
-      return methods;
-    });
+        
+        try {
+          const response = await fetch('/api/container', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'restartServer',
+              containerUrl: deployment.url,
+            }),
+          });
+          
+          if (!response.ok) {
+            throw new Error('Failed to restart dev server');
+          }
+          
+          console.log('Dev server restart initiated');
+        } catch (error) {
+          console.error('Error restarting dev server:', error);
+          throw error;
+        }
+             },
+       getBuildErrors: () => {
+         return buildErrors;
+       },
+              checkForAIChanges: async (): Promise<void> => {
+         if (!deployment?.url || !isContainerHealthy) return;
+        
+        try {
+          const response = await fetch('/api/chat?action=getFileChanges');
+          if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.changedFiles && data.changedFiles.length > 0) {
+              console.log(`[RailwayContainerManager] Immediate AI changed files:`, data.changedFiles);
+              
+              // Update file tracking for each changed file
+              for (const filePath of data.changedFiles) {
+                try {
+                  // Read the updated file content
+                  const fileResponse = await fetch('/api/container', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      action: 'readFile',
+                      params: { path: filePath },
+                      containerUrl: deployment.url,
+                    }),
+                  });
+
+                  if (fileResponse.ok) {
+                    const fileData = await fileResponse.json();
+                    if (fileData.success && fileData.content) {
+                      // Mark the file as changed in the tracking system
+                      markFileAsChanged(filePath, fileData.content);
+                    }
+                  }
+                } catch (error) {
+                  console.error(`[RailwayContainerManager] Failed to read AI-changed file ${filePath}:`, error);
+                }
+              }
+            }
+          }
+        } catch (error) {
+          console.error('[RailwayContainerManager] Failed to check for AI file changes:', error);
+        }
+      }
+    };
+    
+    // Store reference to self for internal use
+    selfRef.current = methods;
+    return methods;
+  });
 
   // Function to retry iframe loading
   const retryIframe = useCallback(() => {
@@ -201,14 +240,89 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
     }
   }, [currentUrl]);
 
+  // File change listener for automatic iframe reloading
+  const handleFileChange = useCallback((filePath: string) => {
+    console.log(`[RailwayContainerManager] File changed: ${filePath}, triggering iframe reload`);
+    
+    // Only reload if we're on the preview tab and iframe is loaded
+    if (activeTab === 'preview' && iframeLoaded && shouldShowIframe) {
+      // Add a small delay to allow the file system to settle
+      setTimeout(() => {
+        handleReload();
+      }, 500);
+    }
+  }, [activeTab, iframeLoaded, shouldShowIframe, handleReload]);
+
+  // Register file change listener
+  useEffect(() => {
+    onFileChange(handleFileChange);
+    
+    return () => {
+      removeFileChangeListener(handleFileChange);
+    };
+  }, [onFileChange, removeFileChangeListener, handleFileChange]);
+
+  // Poll for AI file changes
+  useEffect(() => {
+    if (!deployment?.url || !isContainerHealthy) return;
+
+    const pollForAIChanges = async () => {
+      try {
+        const response = await fetch('/api/chat?action=getFileChanges');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.changedFiles && data.changedFiles.length > 0) {
+            console.log(`[RailwayContainerManager] AI changed files:`, data.changedFiles);
+            
+            // Update file tracking for each changed file
+            for (const filePath of data.changedFiles) {
+              try {
+                // Read the updated file content
+                const fileResponse = await fetch('/api/container', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    action: 'readFile',
+                    params: { path: filePath },
+                    containerUrl: deployment.url,
+                  }),
+                });
+
+                if (fileResponse.ok) {
+                  const fileData = await fileResponse.json();
+                  if (fileData.success && fileData.content) {
+                    // Mark the file as changed in the tracking system
+                    markFileAsChanged(filePath, fileData.content);
+                  }
+                }
+              } catch (error) {
+                console.error(`[RailwayContainerManager] Failed to read AI-changed file ${filePath}:`, error);
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('[RailwayContainerManager] Failed to poll for AI file changes:', error);
+      }
+    };
+
+    // Poll every 5 seconds for AI file changes, but only when container is healthy
+    const interval = setInterval(pollForAIChanges, 5000);
+    
+    return () => clearInterval(interval);
+  }, [deployment?.url, isContainerHealthy, markFileAsChanged]);
+
   // No more polling needed - deployment API will block until ready
 
   const deployContainer = useCallback(async (): Promise<void> => {
-    // Prevent double deployment from React StrictMode
-    if (isDeploying) {
+    // Prevent double deployment from React StrictMode and race conditions
+    if (isDeploying || deploymentInProgressRef.current) {
       console.log('[RailwayContainerManager] Deployment already in progress, skipping...');
       return;
     }
+
+    // Set the deployment lock
+    deploymentInProgressRef.current = true;
 
     try {
       setIsDeploying(true);
@@ -257,6 +371,7 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
       setIsLoading(false);
     } finally {
       setIsDeploying(false);
+      deploymentInProgressRef.current = false; // Release the deployment lock
     }
   }, [repoUrl, githubToken, userId, isDeploying]);
 
@@ -402,19 +517,28 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
       // Health check function
   const checkContainerHealth = useCallback(async (containerUrl: string): Promise<{ healthy: boolean; details?: Record<string, unknown> }> => {
     try {
-      const healthResponse = await fetch(`${containerUrl}/_container/health`);
+      const healthResponse = await fetch('/api/container', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'checkHealth',
+          containerUrl,
+        }),
+      });
+      
       if (!healthResponse.ok) {
         return { healthy: false };
       }
       
       const healthData = await healthResponse.json();
       
-      // Check if the overall health is true (which means both container API and Next.js app are ready)
-      const isHealthy = healthData.overall?.healthy === true;
+      if (!healthData.success) {
+        return { healthy: false, details: healthData };
+      }
       
       return { 
-        healthy: isHealthy,
-        details: healthData 
+        healthy: healthData.healthy,
+        details: healthData.details 
       };
     } catch (error) {
       return { healthy: false };
@@ -436,6 +560,8 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
           console.log(`Health check attempt ${attempts}/${maxAttempts}...`);
           
           const healthResult = await checkContainerHealth(deployment.url!);
+          console.log(`Health check result:`, healthResult);
+          
           if (healthResult.healthy) {
             console.log('Container is healthy!', healthResult.details);
             setIsContainerHealthy(true);
@@ -553,6 +679,11 @@ const RailwayContainerManager = forwardRef<RailwayContainerManagerRef, RailwayCo
                   <Stack align="center" gap="md">
                     <Loader size="lg" />
                     <Text size="sm" c="dimmed">{status}</Text>
+                    {deployment?.url && (
+                      <Text size="xs" c="dimmed">
+                        Container: {isContainerHealthy ? 'Healthy' : 'Starting...'}
+                      </Text>
+                    )}
                   </Stack>
                 </Box>
               ) : deployment?.url && shouldShowIframe ? (

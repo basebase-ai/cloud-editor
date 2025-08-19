@@ -33,86 +33,224 @@ setInterval(() => {
   }
 }, 5000);
 
-export async function POST(request: NextRequest): Promise<NextResponse> {
+export async function POST(req: Request) {
   try {
-    const { action, params, responseId, result, error, containerUrl } =
-      await request.json();
+    const { action, params, containerUrl } = await req.json();
 
     console.log(`[Container API] ===== NEW REQUEST =====`);
     console.log(`[Container API] Action: ${action}`);
-    console.log(`[Container API] ResponseId: ${responseId || "none"}`);
-    console.log(`[Container API] ContainerUrl: ${containerUrl || "none"}`);
+    console.log(`[Container API] ResponseId: none`);
+    console.log(`[Container API] ContainerUrl: ${containerUrl}`);
     console.log(`[Container API] Params:`, params);
 
-    // Handle response from container
-    if (responseId) {
-      console.log(
-        `[Container API] Processing response for request ${responseId}`
-      );
-      const inFlightRequest = inFlightRequests.get(responseId);
-      if (inFlightRequest) {
-        console.log(`[Container API] Found in-flight request, resolving...`);
-        inFlightRequests.delete(responseId);
-        if (error) {
-          console.error(`[Container API] Response contains error:`, error);
-          inFlightRequest.reject(new Error(error));
-        } else {
-          console.log(`[Container API] Response successful:`, result);
-          inFlightRequest.resolve(result);
+    if (!containerUrl) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Container URL is required",
+        }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
         }
-      } else {
-        console.warn(
-          `[Container API] No in-flight request found for responseId: ${responseId}`
-        );
-      }
-      return NextResponse.json({ success: true });
+      );
     }
 
-    // Handle new request from server-side tools
+    // Handle health check directly
+    if (action === "checkHealth") {
+      try {
+        const healthResponse = await fetch(
+          `${containerUrl}/_container/health`,
+          {
+            signal: AbortSignal.timeout(10000), // 10 second timeout
+          }
+        );
+        if (!healthResponse.ok) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              healthy: false,
+              error: `Health check failed: ${healthResponse.status}`,
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+        }
+
+        const healthData = await healthResponse.json();
+        console.log(`[Container API] Health check response:`, healthData);
+
+        const isHealthy = healthData.overall?.healthy === true;
+        console.log(`[Container API] Container healthy: ${isHealthy}`);
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            healthy: isHealthy,
+            details: healthData,
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      } catch (error) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            healthy: false,
+            error:
+              error instanceof Error ? error.message : "Health check failed",
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      }
+    }
+
+    // Create a unique request ID
     const requestId = crypto.randomUUID();
     console.log(`[Container API] Creating new request with ID: ${requestId}`);
 
-    return new Promise<NextResponse>((resolve) => {
-      const pendingRequest: PendingRequest = {
-        id: requestId,
-        action,
-        params,
-        containerUrl,
-        resolve: (result) => {
-          console.log(
-            `[Container API] Request ${requestId} resolved successfully:`,
-            result
-          );
-          resolve(NextResponse.json(result));
-        },
-        reject: (error) => {
-          console.error(
-            `[Container API] Request ${requestId} rejected:`,
-            error.message
-          );
-          resolve(NextResponse.json({ error: error.message }, { status: 500 }));
-        },
-        timestamp: Date.now(),
-      };
+    // Store the request in the pending queue (for tracking purposes)
+    const request: PendingRequest = {
+      id: requestId,
+      action,
+      params: params || {},
+      timestamp: Date.now(),
+      resolve: () => {}, // Not used in direct forwarding
+      reject: () => {}, // Not used in direct forwarding
+    };
 
-      pendingRequests.set(requestId, pendingRequest);
-      console.log(
-        `[Container API] Request ${requestId} added to pending queue. Total pending: ${pendingRequests.size}`
-      );
+    pendingRequests.set(requestId, request);
+    console.log(
+      `[Container API] Request ${requestId} added to pending queue. Total pending: ${pendingRequests.size}`
+    );
 
+    // Try to forward the request directly to the deployed container
+    try {
       console.log(
         `[Container API] Forwarding request ${requestId} directly to deployed container: ${containerUrl}`
       );
 
-      // Update the request with the correct container URL
-      pendingRequest.containerUrl = containerUrl;
-      forwardToContainer(pendingRequest);
-    });
+      // Convert camelCase action names to snake_case for container endpoints
+      const actionToEndpoint = (action: string): string => {
+        const mappings: Record<string, string> = {
+          listFiles: "list_files",
+          readFile: "read_file",
+          writeFile: "write_file",
+          runCommand: "run_command",
+          restartServer: "restart_server",
+          searchFiles: "search_files",
+          runLinter: "run_linter",
+          replaceLines: "replace_lines",
+          deleteFile: "delete_file",
+        };
+        return mappings[action] || action;
+      };
+
+      const endpoint = actionToEndpoint(action);
+      const containerEndpoint = `${containerUrl}/_container/${endpoint}`;
+      console.log(
+        `[Container API] Forwarding request to: ${containerEndpoint}`
+      );
+      console.log(`[Container API] Request params:`, params);
+
+      const requestBody = params || {};
+      console.log(
+        `[Container API] Request body being sent:`,
+        JSON.stringify(requestBody)
+      );
+
+      const response = await fetch(containerEndpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+        signal: AbortSignal.timeout(30000), // 30 second timeout
+      });
+
+      console.log(`[Container API] Response status: ${response.status}`);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.log(`[Container API] Error response:`, errorText);
+
+        // Handle common container not ready scenarios
+        if (response.status === 503 || response.status === 502) {
+          throw new Error(
+            `Container is still starting up. Please wait a few more seconds.`
+          );
+        } else if (response.status === 404) {
+          throw new Error(
+            `Container endpoint not found. The container may not be properly configured.`
+          );
+        } else {
+          throw new Error(
+            `Container request failed: ${response.status} - ${errorText}`
+          );
+        }
+      }
+
+      const result = await response.json();
+      console.log(`[Container API] Success response for ${action}:`, result);
+
+      // Remove the request from pending queue
+      pendingRequests.delete(requestId);
+      console.log(
+        `[Container API] Request ${requestId} completed successfully. Remaining pending: ${pendingRequests.size}`
+      );
+
+      return new Response(JSON.stringify(result), {
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (error) {
+      console.log(
+        `[Container API] Failed to forward request to container:`,
+        error
+      );
+
+      // Remove the request from pending queue
+      pendingRequests.delete(requestId);
+      console.log(
+        `[Container API] Request ${requestId} rejected: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }. Remaining pending: ${pendingRequests.size}`
+      );
+
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error:
+            error instanceof Error ? error.message : "Container request failed",
+          action,
+          message: `❌ ${
+            error instanceof Error ? error.message : "Container request failed"
+          }`,
+        }),
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
   } catch (error) {
-    console.error("[Container API] Top-level error:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
+    console.error("[Container API] Error processing request:", error);
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "Internal server error",
+        message: "❌ Internal server error",
+      }),
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }
     );
   }
 }
